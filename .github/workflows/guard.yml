@@ -1,0 +1,27 @@
+name: guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: leak
+        name: fail if .planning/ or .claude/ is tracked
+        run: |
+          if [ -n "$(git ls-files -- .planning .claude)" ]; then
+            echo "::error::.planning/ or .claude/ is tracked — planning and agent files never enter a public repo"
+            exit 1
+          fi
+          echo "guard ok"

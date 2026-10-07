@@ -1,0 +1,23 @@
+# Agent and planning folders never enter this public repository
+.planning/
+.claude/
+.agents/
+.codex/
+.cursor/
+.opencode/
+.zcode/
+.idea/
+.vscode/
+.mcp.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Go
+/bin/
+*.test
+*.out
+coverage.*
