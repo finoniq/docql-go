@@ -1,0 +1,425 @@
+{
+  "version": 1,
+  "contract": "docql-console/stub-v1",
+  "stubEnv": {
+    "STUB_EXTRA_KEYS": "sdk-contract:sdk-contract-test-key-0001",
+    "STUB_TEST_KNOBS": "true",
+    "STUB_MAX_UPLOAD_BYTES": "65536"
+  },
+  "runtimeEnv": {
+    "DOCQL_INTERNAL_KEY": "required at runtime: a fresh random value of at least 32 characters; never stored in this file"
+  },
+  "keys": {
+    "valid": "sdk-contract-test-key-0001",
+    "invalid": "sdk-contract-never-issued-key-0000",
+    "note": "through the gateway edge, valid is replaced by a gateway-issued key; missing means no X-API-Key header"
+  },
+  "cases": [
+    {
+      "id": "ok-query",
+      "via": "sdk",
+      "description": "A one-page PDF with a plain English query answers 200 with one counted page and no OCR.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "invoice.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "What is the total amount?"
+      },
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "pageCount": 1,
+        "pagesOcr": 0,
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "ok-prompt",
+      "via": "sdk",
+      "description": "A one-page PDF with a prompt instead of a query answers 200.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "invoice.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "prompt": "Summarise this document."
+      },
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "pageCount": 1,
+        "pagesOcr": 0,
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "ok-mode-standard",
+      "via": "sdk",
+      "description": "An explicit standard-mode request answers 200.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "invoice.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "What is the invoice number?",
+        "mode": "standard"
+      },
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "pageCount": 1,
+        "pagesOcr": 0,
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "ok-page-counts",
+      "via": "sdk",
+      "description": "The pages-3_ocr-1.pdf filename knobs report three pages and one OCR page.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "pages-3_ocr-1.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "List every line item."
+      },
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "pageCount": 3,
+        "pagesOcr": 1,
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "ok-thai",
+      "via": "sdk",
+      "description": "A Thai filename with a Thai query answers 200 with one counted page.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "ใบแจ้งหนี้.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "ยอดรวมทั้งหมดเท่าไร"
+      },
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "pageCount": 1,
+        "pagesOcr": 0,
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "invalid-key",
+      "via": "sdk",
+      "description": "A never-issued key answers 401 invalid_api_key.",
+      "key": "invalid",
+      "request": {
+        "file": {
+          "name": "invoice.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "What is the total amount?"
+      },
+      "expect": {
+        "status": 401,
+        "reason": "invalid_api_key",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "too-large",
+      "via": "sdk",
+      "description": "A 128 KiB upload against the 64 KiB stub cap answers 413 (the cap comes from stubEnv, not the engine's 25 MiB).",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "big.pdf",
+          "repeatByte": "A",
+          "length": 131072
+        },
+        "query": "What is the total amount?"
+      },
+      "stubConfigDependent": true,
+      "expect": {
+        "status": 413,
+        "reason": "upload_too_large",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "rate-limited",
+      "via": "sdk",
+      "description": "The status-429.pdf filename knob answers 429 service_overloaded with Retry-After 5.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "status-429.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "What is the total amount?"
+      },
+      "expect": {
+        "status": 429,
+        "reason": "service_overloaded",
+        "retryAfterSeconds": 5,
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "missing-query",
+      "via": "sdk",
+      "description": "An empty query string answers 422 missing_query_or_prompt.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "invoice.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": ""
+      },
+      "expect": {
+        "status": 422,
+        "reason": "missing_query_or_prompt",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "invalid-mode",
+      "via": "sdk",
+      "description": "mode turbo answers 422 invalid_params.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "invoice.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "What is the total amount?",
+        "mode": "turbo"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "invalid_params",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "unsupported-file",
+      "via": "sdk",
+      "description": "A non-PDF upload answers 422 unsupported_file_type.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "notes.txt",
+          "base64": "aGVsbG8K"
+        },
+        "query": "What does this say?"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "corrupted-pdf",
+      "via": "sdk",
+      "description": "A PDF header with no page objects answers 422 corrupted_file.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "corrupted.pdf",
+          "base64": "JVBERi0xLjQKJSVFT0YK"
+        },
+        "query": "What is the total amount?"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "corrupted_file",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "over-time-budget",
+      "via": "sdk",
+      "description": "The pages-50.pdf knob with mode fast exceeds the 41-page fast ceiling and answers 422.",
+      "key": "valid",
+      "request": {
+        "file": {
+          "name": "pages-50.pdf",
+          "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+        },
+        "query": "Extract everything.",
+        "mode": "fast"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "document_exceeds_time_budget",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "raw-unsupported-media-type",
+      "via": "raw",
+      "description": "A JSON body instead of multipart answers 415 unsupported_media_type.",
+      "key": "valid",
+      "raw": {
+        "contentType": "application/json",
+        "bodyUtf8": "{\"query\":\"What is the total amount?\"}"
+      },
+      "expect": {
+        "status": 415,
+        "reason": "unsupported_media_type",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "raw-missing-key",
+      "via": "raw",
+      "description": "A valid multipart request without an X-API-Key header answers 401 invalid_api_key.",
+      "key": "missing",
+      "raw": {
+        "contentType": "multipart/form-data; boundary=docqlrawboundary0000000000000001",
+        "bodyUtf8": "--docqlrawboundary0000000000000001\r\nContent-Disposition: form-data; name=\"file\"; filename=\"invoice.pdf\"\r\nContent-Type: application/octet-stream\r\n\r\n%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\r\n--docqlrawboundary0000000000000001\r\nContent-Disposition: form-data; name=\"body\"\r\n\r\n{\"query\":\"What is the total amount?\"}\r\n--docqlrawboundary0000000000000001--\r\n"
+      },
+      "expect": {
+        "status": 401,
+        "reason": "invalid_api_key",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "raw-missing-file-part",
+      "via": "raw",
+      "description": "A multipart body with only a body part answers 422 missing_file_part.",
+      "key": "valid",
+      "raw": {
+        "contentType": "multipart/form-data; boundary=docqlrawboundary0000000000000001",
+        "bodyUtf8": "--docqlrawboundary0000000000000001\r\nContent-Disposition: form-data; name=\"body\"\r\n\r\n{\"query\":\"What is the total amount?\"}\r\n--docqlrawboundary0000000000000001--\r\n"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "missing_file_part",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "raw-missing-body-field",
+      "via": "raw",
+      "description": "A multipart body with only a file part answers 422 missing_body_field.",
+      "key": "valid",
+      "raw": {
+        "contentType": "multipart/form-data; boundary=docqlrawboundary0000000000000001",
+        "bodyUtf8": "--docqlrawboundary0000000000000001\r\nContent-Disposition: form-data; name=\"file\"; filename=\"invoice.pdf\"\r\nContent-Type: application/octet-stream\r\n\r\n%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\r\n--docqlrawboundary0000000000000001--\r\n"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "missing_body_field",
+        "requestIdPresent": true
+      }
+    },
+    {
+      "id": "raw-body-not-json",
+      "via": "raw",
+      "description": "A body form field that is not JSON answers 422 body_not_json.",
+      "key": "valid",
+      "raw": {
+        "contentType": "multipart/form-data; boundary=docqlrawboundary0000000000000001",
+        "bodyUtf8": "--docqlrawboundary0000000000000001\r\nContent-Disposition: form-data; name=\"file\"; filename=\"invoice.pdf\"\r\nContent-Type: application/octet-stream\r\n\r\n%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\r\n--docqlrawboundary0000000000000001\r\nContent-Disposition: form-data; name=\"body\"\r\n\r\nnot json\r\n--docqlrawboundary0000000000000001--\r\n"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "body_not_json",
+        "requestIdPresent": true
+      }
+    }
+  ],
+  "decodeCases": [
+    {
+      "id": "framework-404",
+      "status": 404,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000000404"
+      },
+      "bodyUtf8": "{\"detail\":\"Not Found\"}\n",
+      "expect": {
+        "status": 404,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000000404"
+      }
+    },
+    {
+      "id": "gateway-502-upstream-auth-failed",
+      "status": 502,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000000502"
+      },
+      "bodyUtf8": "{\"error_info\":\"the gateway could not authenticate to the upstream service\",\"status_code\":502,\"metadata\":{\"reason\":\"upstream_auth_failed\",\"request_id\":\"00000000-0000-4000-8000-000000000502\"}}\n",
+      "expect": {
+        "status": 502,
+        "reason": "upstream_auth_failed",
+        "requestId": "00000000-0000-4000-8000-000000000502"
+      }
+    },
+    {
+      "id": "gateway-503-upstream-unavailable",
+      "status": 503,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000000503"
+      },
+      "bodyUtf8": "{\"error_info\":\"an upstream provider is unavailable\",\"status_code\":503,\"metadata\":{\"reason\":\"upstream_unavailable\",\"request_id\":\"00000000-0000-4000-8000-000000000503\"}}\n",
+      "expect": {
+        "status": 503,
+        "reason": "upstream_unavailable",
+        "requestId": "00000000-0000-4000-8000-000000000503"
+      }
+    },
+    {
+      "id": "framework-405",
+      "status": 405,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000000405"
+      },
+      "bodyUtf8": "{\"detail\":\"Method Not Allowed\"}\n",
+      "expect": {
+        "status": 405,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000000405"
+      }
+    },
+    {
+      "id": "edge-502-empty",
+      "status": 502,
+      "bodyUtf8": "",
+      "expect": {
+        "status": 502,
+        "reason": null,
+        "requestId": null
+      }
+    },
+    {
+      "id": "edge-524-html",
+      "status": 524,
+      "headers": {
+        "content-type": "text/html"
+      },
+      "bodyUtf8": "<html>\r\n<head><title>524 A Timeout Occurred</title></head>\r\n<body>\r\n<center><h1>524 A Timeout Occurred</h1></center>\r\n</body>\r\n</html>\r\n",
+      "expect": {
+        "status": 524,
+        "reason": null,
+        "requestId": null
+      }
+    }
+  ]
+}

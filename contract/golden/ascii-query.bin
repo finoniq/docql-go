@@ -1,0 +1,20 @@
+--docqlgoldenboundary0000000000001
+Content-Disposition: form-data; name="file"; filename="invoice.pdf"
+Content-Type: application/octet-stream
+
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+
+--docqlgoldenboundary0000000000001
+Content-Disposition: form-data; name="body"
+
+{"query":"What is the total amount?"}
+--docqlgoldenboundary0000000000001--

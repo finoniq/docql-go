@@ -1,0 +1,11 @@
+{
+  "files": {
+    "golden.json": "20f3127909120b1b08c57d1752f0e8f5aab2179189d6bc40711aa88f5670772c",
+    "golden/ascii-query.bin": "8dfa3a05adad47033d1b80a6cc8b85b9b03ebca6a8a1a2907cdbaecb636f0a2b",
+    "golden/escaped-filename.bin": "7e19ef9ec15f177cc3106801ebfb5ced4b518f645f513c0fc07ed1df3b289b14",
+    "golden/mode-standard.bin": "29b17fa88165fc581fb5a1b023ddca91bf7ee12ac1abb989c2c2db0be3a2ee27",
+    "golden/prompt.bin": "c0add1a6a341fbb20483e3d6424b04a526474b3e3f0b524fb7e1912c732fa8d0",
+    "golden/thai-query.bin": "ab605d2ab5e2b87a209e30dd53f9e31390ede96dd010e80955a616bfa232710f",
+    "sdk-cases.json": "9762db37f8881822606cf0918584625d4bf9f667e5a8eab00b438eecb6f2b333"
+  }
+}

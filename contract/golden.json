@@ -1,0 +1,58 @@
+{
+  "boundary": "docqlgoldenboundary0000000000001",
+  "contentType": "multipart/form-data; boundary=docqlgoldenboundary0000000000001",
+  "fileContentType": "application/octet-stream",
+  "partOrder": ["file", "body"],
+  "notes": [
+    "D-01: the file part always sends Content-Type: application/octet-stream; the engine judges the real type from the bytes (http.DetectContentType), so no SDK duplicates a per-extension table.",
+    "D-02: the filename is raw UTF-8 inside a quoted filename=\"…\"; only the double quote, CR and LF are escaped, as %22, %0D and %0A, and there is no filename* form.",
+    "Go builds the file part header with mime/multipart CreatePart; CreateFormFile backslash-escapes the filename and forces its own content type, and the stub parser rejects that form.",
+    "D-03: the body part is compact canonical JSON with key order query|prompt first then params, raw UTF-8 and no HTML escaping; params is omitted entirely when mode is unset.",
+    "Python uses json.dumps(…, ensure_ascii=False, separators=(\",\", \":\")); Go uses an Encoder with SetEscapeHTML(false) and trims the trailing newline Encode appends; Java writes UTF-8 explicitly.",
+    "Golden inputs exclude U+2028 and U+2029 (Go escapes them even with HTML escaping off) and all C0 control characters (no JDK was available to verify Jackson's handling).",
+    "A filename containing \" is a wire-bytes test only: the stub decodes %22 but the engine may read it literally (Pitfall 14), so never put stub knobs or engine assertions on such a name."
+  ],
+  "cases": [
+    {
+      "id": "ascii-query",
+      "bin": "golden/ascii-query.bin",
+      "filename": "invoice.pdf",
+      "fileBase64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK",
+      "query": "What is the total amount?",
+      "bodyJson": "{\"query\":\"What is the total amount?\"}"
+    },
+    {
+      "id": "thai-query",
+      "bin": "golden/thai-query.bin",
+      "filename": "ใบแจ้งหนี้.pdf",
+      "fileBase64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK",
+      "query": "ยอดรวมทั้งหมดเท่าไร",
+      "bodyJson": "{\"query\":\"ยอดรวมทั้งหมดเท่าไร\"}"
+    },
+    {
+      "id": "prompt",
+      "bin": "golden/prompt.bin",
+      "filename": "invoice.pdf",
+      "fileBase64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK",
+      "prompt": "Extract the invoice number.",
+      "bodyJson": "{\"prompt\":\"Extract the invoice number.\"}"
+    },
+    {
+      "id": "mode-standard",
+      "bin": "golden/mode-standard.bin",
+      "filename": "invoice.pdf",
+      "fileBase64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK",
+      "query": "Total?",
+      "mode": "standard",
+      "bodyJson": "{\"query\":\"Total?\",\"params\":{\"mode\":\"standard\"}}"
+    },
+    {
+      "id": "escaped-filename",
+      "bin": "golden/escaped-filename.bin",
+      "filename": "a\"b\r\nc.pdf",
+      "fileBase64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK",
+      "query": "Sum <net> & \"vat\" / total",
+      "bodyJson": "{\"query\":\"Sum <net> & \\\"vat\\\" / total\"}"
+    }
+  ]
+}
