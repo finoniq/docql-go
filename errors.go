@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -155,19 +156,28 @@ func scrubAndTruncate(b []byte, key string) string {
 var now = time.Now
 
 // parseRetryAfter returns the Retry-After header value as whole seconds, or 0
-// when absent or unparsable (D-09). Delta-seconds pass through as-is; the
-// HTTP-date form (rounded up against now, clamped at 0) is completed together
-// with its tests in 12-04.
+// when absent or unparsable (D-09). Delta-seconds pass through as-is; an
+// HTTP-date becomes the seconds from now rounded up and clamped at 0, so a
+// past date means "retry now" rather than a negative sleep. A value that
+// cannot be a Duration is 0, never an overflow.
 func parseRetryAfter(v string, now time.Time) time.Duration {
 	text := strings.TrimSpace(v)
-	if !isASCIIDigits(text) {
-		return 0
+	if isASCIIDigits(text) {
+		secs, err := strconv.ParseInt(text, 10, 64)
+		if err != nil || secs > math.MaxInt64/int64(time.Second) {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
 	}
-	secs, err := strconv.Atoi(text)
+	date, err := http.ParseTime(text)
 	if err != nil {
 		return 0
 	}
-	return time.Duration(secs) * time.Second
+	d := date.Sub(now)
+	if d <= 0 {
+		return 0
+	}
+	return time.Duration((d+time.Second-1)/time.Second) * time.Second
 }
 
 // isASCIIDigits reports whether s is a non-empty run of ASCII 0-9.
