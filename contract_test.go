@@ -197,6 +197,18 @@ func stubURL(t *testing.T) string {
 	return base
 }
 
+// skipWithoutStub ends the calling test when no stub is running: it skips, or
+// fails under DOCQL_REQUIRE_STUB=1. A subtest's t.Skip unwinds the subtest
+// goroutine, so the ran/skipped counters in the case-list parents never see
+// it and their count assertion would fail a plain `go test ./...`; the parent
+// has to decide once, before it starts any subtest.
+func skipWithoutStub(t *testing.T) {
+	t.Helper()
+	if os.Getenv("DOCQL_STUB_URL") == "" {
+		stubURL(t)
+	}
+}
+
 func caseFileBytes(t *testing.T, f caseFileSpec) []byte {
 	t.Helper()
 	if f.Base64 != "" {
@@ -250,6 +262,7 @@ func countVia(kit *sdkCasesFile, via string) int {
 // tracer fixed. The ran-count assertion after the loop keeps a renumbered or
 // half-skipped list from silently going green (T-12-21).
 func TestContractSDKCases(t *testing.T) {
+	skipWithoutStub(t)
 	kit := loadSDKCases(t)
 	want := countVia(kit, "sdk")
 	ran, skipped := 0, 0
@@ -364,6 +377,7 @@ var replayClient = &http.Client{Timeout: 60 * time.Second}
 // parseResult functions the SDK client uses, so the decoder is proven against
 // live bytes, not only fixtures.
 func TestContractRawCases(t *testing.T) {
+	skipWithoutStub(t)
 	kit := loadSDKCases(t)
 	want := countVia(kit, "raw")
 	ran, skipped := 0, 0
