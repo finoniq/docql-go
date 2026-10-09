@@ -1,0 +1,204 @@
+# The release workflow (GO-01, D-18): a pushed v* tag becomes a warmed module
+# proxy, a pkg.go.dev page and a GitHub Release, in this order.
+#
+#   1. precheck  (no approval) refuses every wrong tag: shape vX.Y.Z, tag ==
+#                "v" + Version, a dated CHANGELOG entry, the tagged commit on
+#                origin/main, an annotated tag, and green guard/ci/contract push
+#                runs on main for that exact commit.
+#   2. ci, contract  run the same checks again on the tagged commit.
+#   3. publish   waits for the owner to approve the `release` environment, then
+#                warms proxy.golang.org, requests the pkg.go.dev fetch and
+#                creates the GitHub Release from the CHANGELOG section.
+#   4. verify    proves the result from a clean module through the real proxy.
+#
+# The module proxy caches a fetched version forever (PITFALLS section 9), so no job
+# before the approval contacts proxy.golang.org or pkg.go.dev about docql-go: a
+# mistaken tag can still be deleted until the owner approves.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  precheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.precheck.outputs.version }}
+      sha: ${{ steps.precheck.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # origin/main and the tag must both be present
+      - name: validate the tag against version.go, the CHANGELOG and origin/main
+        id: precheck
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/release-precheck.sh
+      - name: the tag is annotated
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          type=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.type)
+          if [ "$type" != "tag" ]; then
+            echo "the release tag is not an annotated tag (git tag -a)" >&2
+            exit 1
+          fi
+      - name: the tagged commit has green CI on main
+        env:
+          SHA: ${{ steps.precheck.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for wf in guard.yml ci.yml contract.yml; do
+            green=$(gh run list -R "$GH_REPO" --workflow "$wf" --branch main --event push --commit "$SHA" --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')
+            if [ "$green" -lt 1 ]; then
+              echo "no successful $wf push run on main for the tagged commit" >&2
+              exit 1
+            fi
+            echo "$wf: $green successful push run(s) on main for $SHA"
+          done
+
+  ci:
+    needs: [precheck]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  contract:
+    needs: [precheck]
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/contract.yml
+    secrets: inherit
+
+  publish:
+    needs: [precheck, ci, contract]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: release
+      url: https://pkg.go.dev/github.com/finoniq/docql-go@${{ github.ref_name }}
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.precheck.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: warm the module proxy
+        env:
+          GOFLAGS: -mod=mod
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          export GOPROXY=https://proxy.golang.org
+          export GOSUMDB=sum.golang.org
+          export GOPRIVATE= GONOPROXY= GONOSUMDB=
+          WORK=$(mktemp -d "$RUNNER_TEMP/warm.XXXXXX")
+          cd "$WORK"
+          ok=0
+          for _ in $(seq 1 10); do
+            if go list -m "github.com/finoniq/docql-go@$TAG"; then
+              ok=1
+              break
+            fi
+            sleep 30
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "the module proxy never served the tag after 10 tries" >&2
+            exit 1
+          fi
+      - name: request the pkg.go.dev fetch
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST "https://pkg.go.dev/fetch/github.com/finoniq/docql-go@$TAG" || true)
+          echo "pkg.go.dev fetch request: HTTP $code (best effort, verify polls the page)"
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "the CHANGELOG section for the release is empty" >&2
+            exit 1
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+  verify:
+    needs: [precheck, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: clean module through the proxy, no require, README quickstart
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG"
+      - name: pkg.go.dev shows the version with the licence
+        run: |
+          set -euo pipefail
+          base="https://pkg.go.dev/github.com/finoniq/docql-go@$TAG"
+          ok=0
+          for i in $(seq 1 40); do
+            if [ "$i" -gt 1 ] && [ $(( (i - 1) % 10 )) -eq 0 ]; then
+              curl -s -o /dev/null --max-time 30 -X POST "https://pkg.go.dev/fetch/github.com/finoniq/docql-go@$TAG" || true
+            fi
+            curl -fsS --max-time 30 -o "$RUNNER_TEMP/pkg-licenses.html" "$base?tab=licenses" || : > "$RUNNER_TEMP/pkg-licenses.html"
+            curl -fsS --max-time 30 -o "$RUNNER_TEMP/pkg-doc.html" "$base" || : > "$RUNNER_TEMP/pkg-doc.html"
+            if grep -q 'Apache-2.0' "$RUNNER_TEMP/pkg-licenses.html" && grep -q 'NewClient' "$RUNNER_TEMP/pkg-doc.html"; then
+              ok=1
+              break
+            fi
+            sleep 30
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "pkg.go.dev never showed the version with the Apache-2.0 licence and NewClient after 40 tries" >&2
+            exit 1
+          fi
+          echo "PKGGODEV_OK"
+          echo "RELEASE_VERIFY_OK"
