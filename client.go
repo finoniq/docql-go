@@ -22,16 +22,21 @@ type Client struct {
 	cfg *config
 }
 
+// sdkDialer is the dialer of the SDK-built transport: the connect limit on
+// dial, with keep-alives (D-02). It is a package-level var so tests can read
+// the connect limit.
+var sdkDialer = &net.Dialer{
+	Timeout:   connectTimeout,
+	KeepAlive: 30 * time.Second,
+}
+
 // sdkTransport builds, once, the transport for clients without an injected
 // *http.Client: a clone of http.DefaultTransport with the connect limit
 // applied to dial and TLS handshake (D-02). It is shared and never torn down
 // by the SDK (D-03).
 var sdkTransport = sync.OnceValue(func() http.RoundTripper {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.DialContext = (&net.Dialer{
-		Timeout:   connectTimeout,
-		KeepAlive: 30 * time.Second,
-	}).DialContext
+	tr.DialContext = sdkDialer.DialContext
 	tr.TLSHandshakeTimeout = connectTimeout
 	return tr
 })
@@ -79,8 +84,12 @@ func NewClient(opts ...Option) (*Client, error) {
 	if !strings.HasPrefix(lowered, "http://") && !strings.HasPrefix(lowered, "https://") {
 		return nil, fmt.Errorf("%w (got %q)", ErrInvalidAPIURL, urlStr)
 	}
-	if _, perr := url.Parse(urlStr); perr != nil {
+	parsed, perr := url.Parse(urlStr)
+	if perr != nil {
 		return nil, fmt.Errorf("%w (not a URL Go can parse: %v)", ErrInvalidAPIURL, perr)
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("%w (no host in %q)", ErrInvalidAPIURL, urlStr)
 	}
 	apiURL := strings.TrimRight(urlStr, "/")
 
@@ -111,6 +120,23 @@ func NewClient(opts ...Option) (*Client, error) {
 	cfg.httpClient = httpClient
 	return &Client{cfg: cfg}, nil
 }
+
+// String shows only the API URL; the API key never prints (D-13). The same
+// text serves GoString for the %#v verb. Both use value receivers on purpose:
+// fmt cannot call methods through an unexported field, so a pointer-only
+// receiver would let %s on a dereferenced Client fall into the bad-verb
+// fallback that deep-prints the unexported config — and the key. With value
+// receivers every verb on both the pointer and the dereferenced value renders
+// this masked form.
+func (c Client) String() string {
+	if c.cfg == nil {
+		return `docql.Client{APIURL: ""}`
+	}
+	return fmt.Sprintf("docql.Client{APIURL: %q}", c.cfg.apiURL)
+}
+
+// GoString mirrors String so %#v masks the key too (D-13).
+func (c Client) GoString() string { return c.String() }
 
 // userAgent is sent on every request (D-14).
 func userAgent() string {
