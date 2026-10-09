@@ -1,7 +1,9 @@
 # The SDK contract kit check (CTR-02): pull the digest-pinned private docql-stub
 # image with this repo's own GITHUB_TOKEN and prove that the kit it serves over HTTP
-# equals the vendored copy in contract/ (D-07). Phases 11-13 extend this workflow to
-# run the full SDK case list against the same pinned stub.
+# equals the vendored copy in contract/ (D-07). Since Phase 12 the workflow also runs
+# the full shared SDK case list against the same pinned stub, gated on the vendored
+# PASS count and refusing any FAIL or SKIP, plus the README quickstart (contract-cases),
+# and it is reusable so release.yml runs it on a tag.
 name: contract
 
 on:
@@ -9,6 +11,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,13 +25,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: served kit equals vendored kit (D-07)
         run: scripts/bump-stub.sh --verify
+
+  contract-cases:
+    name: contract-cases
+    # Same fork guard as contract-access: the pinned stub image is private.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: shared case list against the pinned stub
+        run: |
+          set -euo pipefail
+          WANT=$(jq '[.cases[] | select(.via == "sdk" or .via == "raw")] | length' contract/sdk-cases.json)
+          scripts/stub-up.sh --run env DOCQL_REQUIRE_STUB=1 go test -count=1 -shuffle=on -run '^TestContract' -v . | tee "$RUNNER_TEMP/contract.log"
+          pass_count=$(grep -cE '^    --- PASS: TestContract(SDK|Raw)Cases/' "$RUNNER_TEMP/contract.log" || true)
+          if [ "$pass_count" -ne "$WANT" ]; then
+            echo "expected $WANT TestContract(SDK|Raw)Cases PASS lines, saw $pass_count" >&2
+            exit 1
+          fi
+          if grep -Eq -- '--- (FAIL|SKIP)' "$RUNNER_TEMP/contract.log"; then
+            echo "the contract run has FAIL or SKIP lines" >&2
+            exit 1
+          fi
+          echo "contract-cases: $pass_count/$WANT case subtests PASS, no FAIL/SKIP"
+      - name: README quickstart
+        run: scripts/stub-up.sh --run scripts/run-readme.sh

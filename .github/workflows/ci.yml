@@ -1,0 +1,113 @@
+# Continuous integration for the docql Go SDK (GO-05, SC4): the exact go.mod
+# shape (stdlib-only, no toolchain line), gofmt, go vet, staticcheck and the
+# README-equal example check, plus the unit suite with the race detector on
+# both supported toolchains — the oldstable cell must equal the go.mod floor,
+# stable must be newer. The contract suite against the pinned stub lives in
+# contract.yml. This workflow is reusable (workflow_call) so release.yml runs
+# the same checks on a tag.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: go.mod is exactly the three-line stdlib-only file
+        run: |
+          set -euo pipefail
+          printf 'module github.com/finoniq/docql-go\n\ngo 1.26\n' > "$RUNNER_TEMP/go.mod.expected"
+          if ! cmp -s go.mod "$RUNNER_TEMP/go.mod.expected"; then
+            echo "::error::go.mod must be exactly 'module github.com/finoniq/docql-go', a blank line, 'go 1.26' — no toolchain line, zero require lines"
+            diff -u "$RUNNER_TEMP/go.mod.expected" go.mod || true
+            exit 1
+          fi
+      - name: gofmt clean
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)" || {
+            echo "these files are not gofmt-clean:" >&2
+            gofmt -l . >&2
+            exit 1
+          }
+      - name: go vet
+        run: go vet ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
+      - name: README example matches
+        run: scripts/check-example.sh
+
+  unit:
+    name: unit (${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [oldstable, stable]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: false
+      - name: toolchain matches the matrix cell
+        env:
+          GO_CELL: ${{ matrix.go-version }}
+        run: |
+          set -euo pipefail
+          floor=$(sed -nE 's/^go ([0-9]+)\.([0-9]+)$/\1.\2/p' go.mod)
+          if [ -z "$floor" ]; then
+            echo "cannot read the go directive from go.mod" >&2
+            exit 1
+          fi
+          f_major=${floor%%.*}
+          f_minor=${floor#*.}
+          actual=$(go env GOVERSION)
+          ver=${actual#go}
+          a_major=${ver%%.*}
+          a_minor=${ver#*.}
+          a_minor=${a_minor%%.*}
+          case "$GO_CELL" in
+            oldstable)
+              if [ "$a_major.$a_minor" != "$floor" ]; then
+                echo "oldstable moved past the go.mod floor — raise the 'go' directive (oldstable is $actual, floor is go $floor)" >&2
+                exit 1
+              fi
+              ;;
+            stable)
+              if [ "$a_major" -lt "$f_major" ] || { [ "$a_major" -eq "$f_major" ] && [ "$a_minor" -le "$f_minor" ]; }; then
+                echo "stable ($actual) is not newer than the go.mod floor (go $floor) — the go directive went stale" >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "unknown matrix cell: $GO_CELL" >&2
+              exit 1
+              ;;
+          esac
+          echo "cell $GO_CELL is $actual, floor go $floor"
+      - name: unit tests with the race detector
+        run: go test -race -count=1 ./...
