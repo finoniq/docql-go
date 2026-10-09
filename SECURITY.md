@@ -11,5 +11,4 @@ Please use GitHub private vulnerability reporting: open this repository's
 
 ## Supported versions
 
-No version has been released yet. Once releases exist, only the latest
-published version is supported.
+Only the latest published release receives security fixes.
