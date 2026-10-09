@@ -38,3 +38,37 @@ const (
 	// Error.Error (D-09).
 	snippetMaxChars = 200
 )
+
+// The DocQL reasons (D-08), the Go spelling of the stub REASON_TEXTS plus the
+// gateway ERROR_CLASSES. Error.Reason carries these values; classification is
+// by status, never by body shape.
+const (
+	// ReasonInvalidAPIKey is the 401 reason for a missing or unknown key.
+	ReasonInvalidAPIKey = "invalid_api_key"
+	// ReasonUploadTooLarge is the 413 reason for an upload over the limit.
+	ReasonUploadTooLarge = "upload_too_large"
+	// ReasonUnsupportedMediaType is the 415 reason for a non-multipart request.
+	ReasonUnsupportedMediaType = "unsupported_media_type"
+	// ReasonMissingFilePart is the 422 reason for a request without its file part.
+	ReasonMissingFilePart = "missing_file_part"
+	// ReasonMissingBodyField is the 422 reason for a request without its body field.
+	ReasonMissingBodyField = "missing_body_field"
+	// ReasonBodyNotJSON is the 422 reason for a body field that is not JSON.
+	ReasonBodyNotJSON = "body_not_json"
+	// ReasonMissingQueryOrPrompt is the 422 reason for neither query nor prompt.
+	ReasonMissingQueryOrPrompt = "missing_query_or_prompt"
+	// ReasonInvalidParams is the 422 reason for invalid params.
+	ReasonInvalidParams = "invalid_params"
+	// ReasonUnsupportedFileType is the 422 reason for an unsupported file type.
+	ReasonUnsupportedFileType = "unsupported_file_type"
+	// ReasonCorruptedFile is the 422 reason for a file that cannot be parsed.
+	ReasonCorruptedFile = "corrupted_file"
+	// ReasonDocumentExceedsTimeBudget is the 422 reason for a document over the time budget.
+	ReasonDocumentExceedsTimeBudget = "document_exceeds_time_budget"
+	// ReasonServiceOverloaded is the 429 reason telling the caller to retry later.
+	ReasonServiceOverloaded = "service_overloaded"
+	// ReasonUpstreamUnavailable is the 503 reason for an unavailable upstream.
+	ReasonUpstreamUnavailable = "upstream_unavailable"
+	// ReasonUpstreamAuthFailed is the 502 reason for a gateway-to-upstream auth failure.
+	ReasonUpstreamAuthFailed = "upstream_auth_failed"
+)
