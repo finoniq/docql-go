@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/textproto"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -111,31 +114,164 @@ func frame(filename string, body []byte, boundary string) (preamble, epilogue []
 	return preamble, bytes.Clone(buf.Bytes()), nil
 }
 
+// openFile opens a path for reading (a seam tests wrap to track opens and
+// closes of the files the SDK opens from a path).
+var openFile = os.Open
+
 // upload is a framed multipart upload ready to send (D-07). contentLength is
 // the exact byte count body yields when the file length is known, so the
 // request carries an exact Content-Length and never chunked framing; -1 means
 // unknown. fileSize is the measured file length excluding framing, -1 when
 // unknown. body is always a multi-reader over preamble, file and epilogue; a
 // pipe is never used (locked GO-03 wire rule). getBody returns a fresh,
-// identical reader, so the request can be replayed.
+// identical reader, so the request can be replayed; closer closes a file the
+// SDK opened from a path, exactly once.
 type upload struct {
 	contentType   string
 	contentLength int64 // -1 = unknown
 	fileSize      int64 // -1 = unknown
 	body          io.ReadCloser
 	getBody       func() (io.ReadCloser, error)
+	closer        *ownCloser
 }
 
-// prepareUpload validates the call and frames the upload for the bytes path
+// ownCloser closes a file the SDK opened from a path — never a caller's
+// reader or file (D-07). close is safe to call more than once.
+type ownCloser struct {
+	f    *os.File
+	done bool
+}
+
+func (o *ownCloser) close() {
+	if o != nil && o.f != nil && !o.done {
+		o.done = true
+		_ = o.f.Close()
+	}
+}
+
+// uploadBody is the request body: the framed multi-reader plus a Close that
+// only ever closes a file the SDK opened from a path.
+type uploadBody struct {
+	io.Reader
+	closer *ownCloser
+}
+
+// Close closes a file the SDK opened from a path; a caller's reader is never
+// closed (D-07).
+func (b *uploadBody) Close() error {
+	b.closer.close()
+	return nil
+}
+
+// exactReader reads at most total bytes from src. When src ends before the
+// measured length has been delivered it fails with an error wrapping
+// errShortRead, so a file that shrank during upload can never silently
+// undersend, and one that grew can never over-send (D-07).
+type exactReader struct {
+	src   io.Reader
+	left  int64
+	total int64
+	err   error
+}
+
+func (e *exactReader) Read(p []byte) (int, error) {
+	if e.err != nil {
+		return 0, e.err
+	}
+	if e.left <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > e.left {
+		p = p[:e.left]
+	}
+	n, err := e.src.Read(p)
+	e.left -= int64(n)
+	switch {
+	case err == io.EOF && e.left > 0:
+		e.err = fmt.Errorf("%w: %d of %d measured bytes missing", errShortRead, e.left, e.total)
+	case err != nil:
+		e.err = err
+	}
+	if e.err != nil {
+		return n, e.err
+	}
+	return n, nil
+}
+
+// measurement carries the outcome of the D-07 length measurement: n is the
+// number of bytes the source still yields (-1 when unknown), start is the
+// position a GetBody rewind must restore, and canSeek reports whether that
+// rewind is possible.
+type measurement struct {
+	n       int64
+	start   int64
+	canSeek bool
+}
+
+// lener is a source measurable through a Len method (D-07), such as
+// *bytes.Reader or *bytes.Buffer.
+type lener interface{ Len() int }
+
+// measureLength implements the D-07 order: a regular *os.File is measured by
+// Stat minus its current offset, then any io.Seeker by an end seek from its
+// current position (restored before returning), then a type with Len. A
+// source is only ever moved relative to its own position, never rewound to an
+// absolute start; an unmeasurable source reports n -1.
+func measureLength(r io.Reader) measurement {
+	if f, ok := r.(*os.File); ok {
+		if st, err := f.Stat(); err == nil && st.Mode().IsRegular() {
+			cur, cerr := f.Seek(0, io.SeekCurrent)
+			if cerr != nil || st.Size() < cur {
+				return measurement{n: -1}
+			}
+			return measurement{n: st.Size() - cur, start: cur, canSeek: true}
+		}
+	}
+	if s, ok := r.(io.Seeker); ok {
+		cur, err := s.Seek(0, io.SeekCurrent)
+		if err == nil {
+			end, err := s.Seek(0, io.SeekEnd)
+			_, _ = s.Seek(cur, io.SeekStart)
+			if err == nil && end >= cur {
+				return measurement{n: end - cur, start: cur, canSeek: true}
+			}
+		}
+	}
+	if l, ok := r.(lener); ok {
+		return measurement{n: int64(l.Len())}
+	}
+	return measurement{n: -1}
+}
+
+// prepareUpload validates the call and frames the upload for every input kind
 // (D-06, D-07). The part name follows the strict filename rule: WithFilename
-// wins verbatim, else the name carried by the File; empty is
-// ErrMissingFilename — there is no default filename. Later File kinds
-// (paths, readers) return ErrNoFile until their plans land.
+// wins verbatim (also over a path's basename), else a path's basename, else
+// the name carried by the File; an empty final name is ErrMissingFilename —
+// there is no default filename. Every validation happens before openFile is
+// called or any byte is read.
 func prepareUpload(file File, instr Instruction, qs querySettings) (*upload, error) {
-	if file.kind != fileBytes {
+	body, err := bodyJSON(instr, qs.mode)
+	if err != nil {
+		return nil, err
+	}
+
+	var partName string
+	switch file.kind {
+	case fileBytes:
+		partName = file.name
+	case filePath:
+		if file.path == "" {
+			return nil, ErrNoFile
+		}
+		partName = filepath.Base(file.path)
+	case fileReader:
+		if file.reader == nil {
+			return nil, ErrNoFile
+		}
+		partName = file.name
+	default:
 		return nil, ErrNoFile
 	}
-	partName := file.name
 	if qs.filename != nil {
 		partName = *qs.filename
 	}
@@ -143,32 +279,108 @@ func prepareUpload(file File, instr Instruction, qs querySettings) (*upload, err
 		return nil, ErrMissingFilename
 	}
 
-	body, err := bodyJSON(instr, qs.mode)
-	if err != nil {
-		return nil, err
+	// Validation is complete: open and measure only now.
+	var source io.Reader
+	var own *ownCloser
+	var m measurement
+	switch file.kind {
+	case fileBytes:
+		source = bytes.NewReader(file.data)
+		m = measurement{n: int64(len(file.data))}
+	case filePath:
+		f, oerr := openFile(file.path)
+		if oerr != nil {
+			return nil, fmt.Errorf("docql: %w", oerr)
+		}
+		own = &ownCloser{f: f}
+		st, serr := f.Stat()
+		if serr != nil {
+			own.close()
+			return nil, fmt.Errorf("docql: %w", serr)
+		}
+		if st.IsDir() {
+			own.close()
+			return nil, fmt.Errorf("docql: %q is a directory: %w", file.path, fs.ErrInvalid)
+		}
+		source = f
+		m = measureLength(f)
+	default: // fileReader
+		source = file.reader
+		m = measureLength(source)
 	}
+
 	boundary := newBoundary()
 	preamble, epilogue, err := frame(partName, body, boundary)
 	if err != nil {
 		return nil, err
 	}
 
-	buildBody := func() (io.ReadCloser, error) {
-		return io.NopCloser(io.MultiReader(
-			bytes.NewReader(preamble),
-			bytes.NewReader(file.data),
-			bytes.NewReader(epilogue),
-		)), nil
+	contentLength := int64(-1)
+	fileSize := int64(-1)
+	var fileSrc io.Reader = source
+	if m.n >= 0 {
+		fileSrc = &exactReader{src: source, left: m.n, total: m.n}
+		contentLength = int64(len(preamble)) + m.n + int64(len(epilogue))
+		fileSize = m.n
 	}
-	first, err := buildBody()
-	if err != nil {
-		return nil, err
+
+	var getBodyFn func() (io.ReadCloser, error)
+	switch {
+	case file.kind == fileBytes:
+		getBodyFn = func() (io.ReadCloser, error) {
+			return io.NopCloser(io.MultiReader(
+				bytes.NewReader(preamble),
+				bytes.NewReader(file.data),
+				bytes.NewReader(epilogue),
+			)), nil
+		}
+	case file.kind == filePath:
+		// A path replay reopens the file: the transport closes the original
+		// request body (and with it the SDK-opened handle) before it would
+		// ever call GetBody, so a rewind of that handle cannot work.
+		getBodyFn = func() (io.ReadCloser, error) {
+			f, oerr := openFile(file.path)
+			if oerr != nil {
+				return nil, oerr
+			}
+			if _, serr := f.Seek(m.start, io.SeekStart); serr != nil {
+				_ = f.Close()
+				return nil, serr
+			}
+			return &uploadBody{
+				Reader: io.MultiReader(
+					bytes.NewReader(preamble),
+					&exactReader{src: f, left: m.n, total: m.n},
+					bytes.NewReader(epilogue),
+				),
+				closer: &ownCloser{f: f},
+			}, nil
+		}
+	case m.canSeek:
+		// A caller's seeker is rewound to the recorded start offset and read
+		// again from there.
+		seeker := source.(io.Seeker)
+		getBodyFn = func() (io.ReadCloser, error) {
+			if _, err := seeker.Seek(m.start, io.SeekStart); err != nil {
+				return nil, err
+			}
+			return io.NopCloser(io.MultiReader(
+				bytes.NewReader(preamble),
+				&exactReader{src: source, left: m.n, total: m.n},
+				bytes.NewReader(epilogue),
+			)), nil
+		}
 	}
+
 	return &upload{
 		contentType:   "multipart/form-data; boundary=" + boundary,
-		contentLength: int64(len(preamble) + len(file.data) + len(epilogue)),
-		fileSize:      int64(len(file.data)),
-		body:          first,
-		getBody:       buildBody,
+		contentLength: contentLength,
+		fileSize:      fileSize,
+		body: &uploadBody{
+			Reader: io.MultiReader(bytes.NewReader(preamble), fileSrc, bytes.NewReader(epilogue)),
+			closer: own,
+		},
+		getBody: getBodyFn,
+		closer:  own,
 	}, nil
 }

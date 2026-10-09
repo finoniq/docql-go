@@ -151,6 +151,10 @@ func userAgent() string {
 // upload passes the API ceiling, because an early 413 can be lost as a reset,
 // and are scrubbed of the key before they leave the SDK.
 func (c *Client) connectionError(ctx context.Context, cause error, up *upload) *ConnectionError {
+	if errors.Is(cause, errShortRead) {
+		message := fmt.Sprintf("docql: the file changed size during upload: %v", cause)
+		return &ConnectionError{msg: scrub(message, c.cfg.apiKey), cause: cause}
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(cause, ctxErr) {
 		cause = fmt.Errorf("%w: %w", cause, ctxErr)
 	}
@@ -191,6 +195,10 @@ func (c *Client) QueryDocument(ctx context.Context, file File, instr Instruction
 	if err != nil {
 		return nil, err
 	}
+	// A file the SDK opened from a path is closed by the SDK on every path,
+	// after the response is read (D-07). The body's own Close is idempotent
+	// with this.
+	defer up.closer.close()
 
 	ctx2, cancel := context.WithTimeout(ctx, c.cfg.timeout)
 	defer cancel()

@@ -34,7 +34,13 @@ func serveCapture(t *testing.T) (*httptest.Server, <-chan *recordedRequest) {
 	t.Helper()
 	got := make(chan *recordedRequest, 16)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, rerr := io.ReadAll(r.Body)
+		if rerr != nil {
+			// An aborted upload never reached the wire as a request; it must
+			// not be recorded as one.
+			http.Error(w, "aborted body", http.StatusBadRequest)
+			return
+		}
 		got <- &recordedRequest{
 			header:           r.Header.Clone(),
 			body:             body,

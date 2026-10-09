@@ -32,6 +32,12 @@ var (
 	// ErrMissingFilename is returned when the final file-part name would be
 	// empty: there is no default filename (D-06).
 	ErrMissingFilename = errors.New("docql: missing filename: this file input needs WithFilename to name the file part")
+
+	// errShortRead marks a measured file that delivered fewer bytes than its
+	// measured length. Callers never match it directly: QueryDocument maps
+	// any chain carrying it to a *ConnectionError naming the size change
+	// (D-07).
+	errShortRead = errors.New("short read")
 )
 
 // Error is the type for every non-2xx API response, matched with errors.As
