@@ -29,7 +29,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
-          go-version: stable
+          # The go.mod floor, not floating stable: staticcheck 2026.2.1 (newest
+          # release, built on x/tools v0.44.1) cannot read the export data of
+          # Go 1.27.2 ("export data version 5 is greater than maximum supported
+          # version 4"). unit still runs on stable. Move to stable once a
+          # staticcheck release supports it.
+          go-version: "1.26"
           cache: false
       - name: go.mod is exactly the three-line stdlib-only file
         run: |
