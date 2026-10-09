@@ -120,7 +120,7 @@ EOF
     (cd "$TMP" && go get github.com/finoniq/docql-go@"$MODULE_VERSION") || true
     exit 1
   fi
-  resolved=$(cd "$TMP" && go list -m github.com/finoniq/docql-go)
+  resolved=$(cd "$TMP" && go list -m -f '{{.Version}}' github.com/finoniq/docql-go)
   echo "RESOLVED_VERSION=$resolved"
   case "$MODULE_VERSION" in
     v[0-9]*.[0-9]*.[0-9]*)
