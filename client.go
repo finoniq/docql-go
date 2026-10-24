@@ -34,12 +34,16 @@ var sdkDialer = &net.Dialer{
 // *http.Client: a clone of http.DefaultTransport with the connect limit
 // applied to dial and TLS handshake (D-02). It is shared and never torn down
 // by the SDK (D-03).
-var sdkTransport = sync.OnceValue(func() http.RoundTripper {
+var sdkTransport = sync.OnceValue(newSDKTransport)
+
+// newSDKTransport is the body of sdkTransport, separate so tests can rebuild
+// the OnceValue after replacing http.DefaultTransport.
+func newSDKTransport() http.RoundTripper {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DialContext = sdkDialer.DialContext
 	tr.TLSHandshakeTimeout = connectTimeout
 	return tr
-})
+}
 
 // refuseRedirect refuses every redirect (D-15): the 3xx response is decoded
 // like any other non-2xx, so X-API-Key never leaves the configured host.

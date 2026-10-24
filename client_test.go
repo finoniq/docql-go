@@ -629,3 +629,122 @@ func equalAny(a, b any) bool {
 	bb, berr := json.Marshal(b)
 	return aerr == nil && berr == nil && bytes.Equal(ab, bb)
 }
+
+// replaceDefaultTransport swaps http.DefaultTransport for a RoundTripper that
+// is not a *http.Transport, as httpmock, otelhttp and VCR recorders do, and
+// rebuilds the SDK's OnceValue so the next NewClient builds its transport
+// afresh (CR-01). Both globals are restored when the test ends; callers must
+// not be parallel.
+func replaceDefaultTransport(t *testing.T) {
+	t.Helper()
+	origDefault, origSDK := http.DefaultTransport, sdkTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = origDefault
+		sdkTransport = origSDK
+	})
+	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("the replaced http.DefaultTransport must not carry SDK calls")
+	})
+	sdkTransport = sync.OnceValue(newSDKTransport)
+}
+
+// newClientRecovered calls NewClient and reports a panic as an error, so a
+// CR-01 regression fails the assertion instead of crashing the test binary,
+// and stays safe to call from any goroutine.
+func newClientRecovered(apiURL string) (c *Client, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c, err = nil, fmt.Errorf("NewClient panicked: %v", r)
+		}
+	}()
+	return NewClient(WithAPIKey("k"), WithAPIURL(apiURL))
+}
+
+// assertFallbackTransport checks the transport a client got after
+// http.DefaultTransport was replaced: the SDK's own *http.Transport with the
+// net/http default field values, the SDK dialer and the connect limit on the
+// TLS handshake.
+func assertFallbackTransport(t *testing.T, rt http.RoundTripper) {
+	t.Helper()
+	tr, ok := rt.(*http.Transport)
+	if !ok {
+		t.Fatalf("client transport is %T, want *http.Transport", rt)
+	}
+	if tr.DialContext == nil {
+		t.Error("DialContext is nil, want the SDK dialer")
+	}
+	if tr.TLSHandshakeTimeout != connectTimeout {
+		t.Errorf("TLSHandshakeTimeout = %s, want %s", tr.TLSHandshakeTimeout, connectTimeout)
+	}
+	if tr.Proxy == nil || !tr.ForceAttemptHTTP2 || tr.MaxIdleConns != 100 ||
+		tr.IdleConnTimeout != 90*time.Second || tr.ExpectContinueTimeout != time.Second {
+		t.Errorf("fallback transport fields drifted from the net/http defaults: Proxy set %v, ForceAttemptHTTP2 %v, MaxIdleConns %d, IdleConnTimeout %s, ExpectContinueTimeout %s",
+			tr.Proxy != nil, tr.ForceAttemptHTTP2, tr.MaxIdleConns, tr.IdleConnTimeout, tr.ExpectContinueTimeout)
+	}
+}
+
+// TestNewClientReplacedDefaultTransport pins CR-01: with http.DefaultTransport
+// replaced by a non-*http.Transport RoundTripper, NewClient returns a working
+// client and never panics, twice, and both clients share the one SDK
+// transport built once.
+func TestNewClientReplacedDefaultTransport(t *testing.T) {
+	srv, got := serveCapture(t)
+	replaceDefaultTransport(t)
+
+	c1, err := newClientRecovered(srv.URL)
+	if err != nil {
+		t.Fatalf("first NewClient: %v", err)
+	}
+	c2, err := newClientRecovered(srv.URL)
+	if err != nil {
+		t.Fatalf("second NewClient: %v", err)
+	}
+	rt1, rt2 := c1.cfg.httpClient.Transport, c2.cfg.httpClient.Transport
+	if rt1 != rt2 || rt1 != sdkTransport() {
+		t.Fatal("the two clients do not share the one SDK transport")
+	}
+	assertFallbackTransport(t, rt1)
+
+	// Working: a real call goes through the SDK transport, not the replaced
+	// DefaultTransport (which fails every request).
+	for _, c := range []*Client{c1, c2} {
+		if req := sendProbe(t, c, got); req.header.Get("X-API-Key") != "k" {
+			t.Errorf("X-API-Key = %q, want k", req.header.Get("X-API-Key"))
+		}
+	}
+}
+
+// TestNewClientConcurrentReplacedDefaultTransport proves the CR-01
+// construction is safe under concurrent first use (sync.OnceValue): 16
+// goroutines call NewClient after the replacement, all succeed, and all get
+// the same transport. Run under -race.
+func TestNewClientConcurrentReplacedDefaultTransport(t *testing.T) {
+	srv, got := serveCapture(t)
+	replaceDefaultTransport(t)
+
+	const n = 16
+	clients := make([]*Client, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			clients[i], errs[i] = newClientRecovered(srv.URL)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: NewClient: %v", i, err)
+		}
+	}
+	shared := clients[0].cfg.httpClient.Transport
+	for i, c := range clients {
+		if c.cfg.httpClient.Transport != shared {
+			t.Fatalf("goroutine %d got a different transport", i)
+		}
+	}
+	assertFallbackTransport(t, shared)
+	sendProbe(t, clients[n-1], got)
+}
