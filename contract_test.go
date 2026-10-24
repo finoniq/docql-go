@@ -85,6 +85,44 @@ func loadSDKCases(t *testing.T) *sdkCasesFile {
 	return &kit
 }
 
+// jobCasesFile is the part of contract/job-cases.json (kit v3) that the kit
+// gate, the reason test and the decode tests read: the reason table, the
+// decode cases and every reason a job case or wait case expects.
+type jobCasesFile struct {
+	Reasons struct {
+		Entries []struct {
+			Reason string `json:"reason"`
+		} `json:"entries"`
+	} `json:"reasons"`
+	DecodeCases []decodeCase `json:"decodeCases"`
+	Cases       []struct {
+		Steps []struct {
+			Expect *struct {
+				Reason         *string `json:"reason"`
+				EmbeddedReason *string `json:"embeddedReason"`
+			} `json:"expect"`
+		} `json:"steps"`
+	} `json:"cases"`
+	WaitCases []struct {
+		Expect struct {
+			Reason *string `json:"reason"`
+		} `json:"expect"`
+	} `json:"waitCases"`
+}
+
+func loadJobCases(t *testing.T) *jobCasesFile {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("contract", "job-cases.json"))
+	if err != nil {
+		t.Fatalf("read contract/job-cases.json: %v", err)
+	}
+	var kit jobCasesFile
+	if err := json.Unmarshal(raw, &kit); err != nil {
+		t.Fatalf("decode contract/job-cases.json: %v", err)
+	}
+	return &kit
+}
+
 // goldenFileBase64 returns the file bytes of one golden.json case (the
 // document the Go-only live checks upload).
 func goldenFileBase64(t *testing.T, id string) []byte {
@@ -116,16 +154,23 @@ func goldenFileBase64(t *testing.T, id string) []byte {
 }
 
 // Kit integrity (GO-05): before any contract case runs, the stub must serve
-// exactly the vendored kit. Three sha256 values must agree: the bytes
-// GET /__stub/sdk-cases serves, the sdk-cases.json entry of the vendored
-// manifest, and the vendored file itself. A mismatch — or a non-200, or an
-// unreachable stub — fails every contract test in this binary. The comparison
-// runs once per test binary (sync.Once) and its result is reused; it can
-// fail, never silently skip.
+// exactly the vendored kit. For each kit file (sdk-cases.json at
+// GET /__stub/sdk-cases, job-cases.json at GET /__stub/job-cases) three sha256
+// values must agree: the bytes the stub serves, the file's entry in the
+// vendored manifest, and the vendored file itself. A mismatch — or a non-200,
+// or an unreachable stub — fails every contract test in this binary. The
+// comparison runs once per test binary (sync.Once) and its result is reused;
+// it can fail, never silently skip.
 var (
 	kitOnce sync.Once
 	kitErr  error
 )
+
+// kitRoutes pairs each vendored kit file with the stub route that serves it.
+var kitRoutes = []struct{ file, route string }{
+	{"sdk-cases.json", "/__stub/sdk-cases"},
+	{"job-cases.json", "/__stub/job-cases"},
+}
 
 func checkKit(t *testing.T, base string) {
 	t.Helper()
@@ -138,16 +183,6 @@ func checkKit(t *testing.T, base string) {
 }
 
 func verifyKit(base string) error {
-	resp, err := http.Get(base + "/__stub/sdk-cases")
-	if err != nil {
-		return fmt.Errorf("GET %s/__stub/sdk-cases: %w", base, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("read /__stub/sdk-cases: %w", err)
-	}
-	served := hex.EncodeToString(sha256Sum(body))
 	manifestRaw, err := os.ReadFile(filepath.Join("contract", "manifest.json"))
 	if err != nil {
 		return fmt.Errorf("read contract/manifest.json: %w", err)
@@ -158,17 +193,36 @@ func verifyKit(base string) error {
 	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
 		return fmt.Errorf("decode contract/manifest.json: %w", err)
 	}
-	declared := manifest.Files["sdk-cases.json"]
-	vendored, err := os.ReadFile(filepath.Join("contract", "sdk-cases.json"))
+	for _, k := range kitRoutes {
+		if err := verifyKitFile(base, k.route, k.file, manifest.Files[k.file]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyKitFile applies the three-way sha256 rule to one kit file.
+func verifyKitFile(base, route, file, declared string) error {
+	resp, err := http.Get(base + route)
 	if err != nil {
-		return fmt.Errorf("read contract/sdk-cases.json: %w", err)
+		return fmt.Errorf("%s: GET %s%s: %w", file, base, route, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("%s: read %s: %w", file, route, err)
+	}
+	served := hex.EncodeToString(sha256Sum(body))
+	vendored, err := os.ReadFile(filepath.Join("contract", file))
+	if err != nil {
+		return fmt.Errorf("read contract/%s: %w", file, err)
 	}
 	vendoredSum := hex.EncodeToString(sha256Sum(vendored))
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET /__stub/sdk-cases: HTTP %d (served sha256 %s, manifest %s, vendored %s)", resp.StatusCode, served, declared, vendoredSum)
+		return fmt.Errorf("%s: GET %s: HTTP %d (served sha256 %s, manifest %s, vendored %s)", file, route, resp.StatusCode, served, declared, vendoredSum)
 	}
 	if served != declared || served != vendoredSum {
-		return fmt.Errorf("sdk-cases.json sha256 mismatch: served %s, manifest %s, vendored %s", served, declared, vendoredSum)
+		return fmt.Errorf("%s sha256 mismatch: served %s, manifest %s, vendored %s", file, served, declared, vendoredSum)
 	}
 	return nil
 }

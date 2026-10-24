@@ -39,9 +39,11 @@ const (
 	snippetMaxChars = 200
 )
 
-// The DocQL reasons (D-08), the Go spelling of the stub REASON_TEXTS plus the
-// gateway ERROR_CLASSES. Error.Reason carries these values; classification is
-// by status, never by body shape.
+// The DocQL reasons (D-08, D-09): exactly the 22 non-null reasons of the
+// vendored contract kit, contract/sdk-cases.json (the sync stub and gateway
+// errors) plus contract/job-cases.json (the job errors). Error.Reason carries
+// these values; classification is by status, never by body shape. Adding
+// constants later is backward compatible, removing them is not.
 const (
 	// ReasonInvalidAPIKey is the 401 reason for a missing or unknown key.
 	ReasonInvalidAPIKey = "invalid_api_key"
@@ -71,4 +73,25 @@ const (
 	ReasonUpstreamUnavailable = "upstream_unavailable"
 	// ReasonUpstreamAuthFailed is the 502 reason for a gateway-to-upstream auth failure.
 	ReasonUpstreamAuthFailed = "upstream_auth_failed"
+	// ReasonConcurrencyLimitExceeded is the gateway 429 reason for an account
+	// with too many requests in progress.
+	ReasonConcurrencyLimitExceeded = "concurrency_limit_exceeded"
+	// ReasonRateLimitExceeded is the gateway 429 reason for an account over its
+	// requests-per-minute limit.
+	ReasonRateLimitExceeded = "rate_limit_exceeded"
+	// ReasonJobNotFound is the 404 reason for an unknown job id.
+	ReasonJobNotFound = "job_not_found"
+	// ReasonJobExpired is the 404 reason for a job whose result has expired.
+	ReasonJobExpired = "job_expired"
+	// ReasonQueueFull is the 429 reason for a job queue with no free slot.
+	ReasonQueueFull = "queue_full"
+	// ReasonIdempotencyKeyConflict is the 422 reason for an idempotency key
+	// reused with a different request.
+	ReasonIdempotencyKeyConflict = "idempotency_key_conflict"
+	// ReasonIdempotencyInProgress is the 409 reason for an idempotency key whose
+	// first request is still being processed.
+	ReasonIdempotencyInProgress = "idempotency_in_progress"
+	// ReasonJobInterrupted is the 503 reason carried only inside a failed job's
+	// error, for a job interrupted before it could complete.
+	ReasonJobInterrupted = "job_interrupted"
 )

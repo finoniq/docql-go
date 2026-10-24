@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "contract": "docql-console/stub-v1",
   "stubEnv": {
     "STUB_EXTRA_KEYS": "sdk-contract:sdk-contract-test-key-0001",
@@ -382,6 +382,46 @@
         "status": 503,
         "reason": "upstream_unavailable",
         "requestId": "00000000-0000-4000-8000-000000000503"
+      }
+    },
+    {
+      "id": "gateway-429-concurrency-limit-exceeded",
+      "status": 429,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000000429",
+        "retry-after": "5",
+        "x-ratelimit-limit-requests": "120",
+        "x-ratelimit-remaining-requests": "87",
+        "x-ratelimit-reset-requests": "41",
+        "x-ratelimit-limit-concurrency": "4",
+        "x-ratelimit-remaining-concurrency": "0"
+      },
+      "bodyUtf8": "{\"error_info\":\"the account has too many requests in progress, retry after the delay in Retry-After\",\"status_code\":429,\"metadata\":{\"reason\":\"concurrency_limit_exceeded\",\"request_id\":\"00000000-0000-4000-8000-000000000429\"}}\n",
+      "expect": {
+        "status": 429,
+        "reason": "concurrency_limit_exceeded",
+        "requestId": "00000000-0000-4000-8000-000000000429"
+      }
+    },
+    {
+      "id": "gateway-429-rate-limit-exceeded",
+      "status": 429,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000001429",
+        "retry-after": "17",
+        "x-ratelimit-limit-requests": "120",
+        "x-ratelimit-remaining-requests": "0",
+        "x-ratelimit-reset-requests": "17",
+        "x-ratelimit-limit-concurrency": "4",
+        "x-ratelimit-remaining-concurrency": "3"
+      },
+      "bodyUtf8": "{\"error_info\":\"the account exceeded its requests-per-minute limit, retry after the delay in Retry-After\",\"status_code\":429,\"metadata\":{\"reason\":\"rate_limit_exceeded\",\"request_id\":\"00000000-0000-4000-8000-000000001429\"}}\n",
+      "expect": {
+        "status": 429,
+        "reason": "rate_limit_exceeded",
+        "requestId": "00000000-0000-4000-8000-000000001429"
       }
     },
     {

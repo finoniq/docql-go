@@ -1,0 +1,2509 @@
+{
+  "version": 3,
+  "contract": "docql-console/stub-v1",
+  "jobContract": {
+    "decision": "D-320",
+    "handoff": "../docql/.planning/handoffs/v0.18.0-docql-console-job-contract.md",
+    "revisions": [
+      "2026-10-15",
+      "2026-10-17",
+      "2026-10-21"
+    ]
+  },
+  "stubEnv": {
+    "STUB_EXTRA_KEYS": "sdk-contract:sdk-contract-test-key-0001,sdk-contract-other:sdk-contract-test-key-0002",
+    "STUB_TEST_KNOBS": "true",
+    "STUB_MAX_UPLOAD_BYTES": "65536",
+    "STUB_JOBS_ENABLED": "true",
+    "STUB_JOBS_POLL_RETRY_AFTER_FAST": "1",
+    "STUB_JOBS_POLL_RETRY_AFTER_STANDARD": "1",
+    "STUB_JOBS_RESULT_TTL_SECONDS": "5",
+    "STUB_JOBS_EXPIRED_WINDOW_SECONDS": "5"
+  },
+  "runtimeEnv": {
+    "DOCQL_INTERNAL_KEY": "required at runtime: a fresh random value of at least 32 characters; never stored in this file"
+  },
+  "keys": {
+    "valid": "sdk-contract-test-key-0001",
+    "validOther": "sdk-contract-test-key-0002",
+    "invalid": "sdk-contract-never-issued-key-0000",
+    "note": "through the gateway edge, valid and validOther are replaced by gateway-issued keys of two different orgs (J4 as DocQL sees it, D-09); missing means no X-API-Key header; trusted is the internal key a console runner supplies at runtime, never stored in this file"
+  },
+  "invariants": [
+    "Every POST /v1/jobs, GET /v1/jobs/{job_id} and DELETE /v1/jobs/{job_id} response carries Cache-Control: no-store and an X-Request-Id, and an app-envelope body's metadata.request_id equals that header (J21).",
+    "A job object's keys come in the order job_id, status, metadata, created_at, started_at, finished_at, expires_at, then result (succeeded only) or error (failed only); its metadata keys come in the order page_count, pages_done, request_id (D-320).",
+    "Timestamps are RFC 3339 UTC with second precision, in the form 2026-10-17T05:00:00Z.",
+    "Retry-After is a whole number of seconds, at least 1.",
+    "Location is the relative path /v1/jobs/{job_id}.",
+    "The job id is opaque: a runner never validates, parses or format-checks it.",
+    "A runner never sends the tenant header: console-target cases run only in console tests, which supply the trusted key and the tenant at runtime, and SDK runners skip them.",
+    "Before a run, every {run} inside a query, prompt or idempotencyKey string is replaced by one per-run token matching [A-Za-z0-9]{8}, so a suite can rerun against a long-lived stub without idempotency or cache carry-over."
+  ],
+  "reasons": {
+    "source": {
+      "path": "../docql/.planning/handoffs/v0.18.0-docql-console-job-contract.md",
+      "section": "§5",
+      "revision": "2026-10-21"
+    },
+    "entries": [
+      {
+        "reason": "job_not_found",
+        "status": 404,
+        "transient": false,
+        "errorInfo": "the job was not found",
+        "metadataExtras": [],
+        "retryAfterSeconds": null,
+        "appearsIn": "GET / DELETE"
+      },
+      {
+        "reason": "job_expired",
+        "status": 404,
+        "transient": false,
+        "errorInfo": "the job has expired",
+        "metadataExtras": [],
+        "retryAfterSeconds": null,
+        "appearsIn": "GET / DELETE, owner only"
+      },
+      {
+        "reason": "queue_full",
+        "status": 429,
+        "transient": true,
+        "errorInfo": "the job queue is full, retry after the delay in Retry-After",
+        "metadataExtras": [
+          "scope"
+        ],
+        "retryAfterSeconds": 5,
+        "appearsIn": "POST"
+      },
+      {
+        "reason": "idempotency_key_conflict",
+        "status": 422,
+        "transient": false,
+        "errorInfo": "the Idempotency-Key was already used with a different request",
+        "metadataExtras": [],
+        "retryAfterSeconds": null,
+        "appearsIn": "POST"
+      },
+      {
+        "reason": "idempotency_in_progress",
+        "status": 409,
+        "transient": false,
+        "errorInfo": "a request with this Idempotency-Key is still being processed, retry after the delay in Retry-After",
+        "metadataExtras": [],
+        "retryAfterSeconds": 1,
+        "appearsIn": "POST"
+      },
+      {
+        "reason": "job_interrupted",
+        "status": 503,
+        "transient": true,
+        "errorInfo": "the job was interrupted before it could complete, resubmit it",
+        "metadataExtras": [],
+        "retryAfterSeconds": null,
+        "appearsIn": "embedded in failed.error only"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "j1",
+      "jid": "J1",
+      "target": "stub",
+      "via": "submit",
+      "description": "A valid submit answers 202 queued with a relative Location and Retry-After; polls move queued, running, succeeded, and the result equals the sync body for the same input (handoff §7).",
+      "steps": [
+        {
+          "op": "sync",
+          "name": "s",
+          "request": {
+            "file": {
+              "name": "queue-300_run-300.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j1-{run})"
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "queue-300_run-300.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j1-{run})"
+          },
+          "expect": {
+            "status": 202,
+            "retryAfterSeconds": 1,
+            "location": true,
+            "jobStatus": "queued"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "succeeded",
+          "expect": {
+            "status": 200,
+            "retryAfterSeconds": null,
+            "resultEqualsSync": "s",
+            "states": [
+              "queued",
+              "running",
+              "succeeded"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-missing-query",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A submit with an empty query and no prompt answers the sync 422 missing_query_or_prompt envelope, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": ""
+          },
+          "expect": {
+            "status": 422,
+            "reason": "missing_query_or_prompt",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-invalid-mode",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A submit with an unknown mode answers the sync 422 invalid_params envelope, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j2-invalid-mode-{run})",
+            "mode": "turbo"
+          },
+          "expect": {
+            "status": 422,
+            "reason": "invalid_params",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-unsupported-file",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A text file answers the sync 422 unsupported_file_type envelope, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "notes.txt",
+              "base64": "cGxhaW4gdGV4dCwgbm90IGEgUERGCg=="
+            },
+            "query": "What is the total amount? (kit-j2-unsupported-file-{run})"
+          },
+          "expect": {
+            "status": 422,
+            "reason": "unsupported_file_type",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-corrupted-file",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A PDF header with no body answers the sync 422 corrupted_file envelope, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "corrupted.pdf",
+              "base64": "JVBERi0xLjQK"
+            },
+            "query": "What is the total amount? (kit-j2-corrupted-file-{run})"
+          },
+          "expect": {
+            "status": 422,
+            "reason": "corrupted_file",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-over-time-budget",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A document over the mode's whole-job time budget answers the sync 422 document_exceeds_time_budget envelope at submit, and no job exists.",
+      "note": "Revision 2026-10-17 (c): submit always checks the budget before any job state exists, even where sync would answer from its cache.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "pages-50.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j2-over-time-budget-{run})"
+          },
+          "expect": {
+            "status": 422,
+            "reason": "document_exceeds_time_budget",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-too-large",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A 128 KiB upload against the 64 KiB stub cap answers the sync 413 upload_too_large envelope, and no job exists.",
+      "stubConfigDependent": true,
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "big.pdf",
+              "repeatByte": "a",
+              "length": 131072
+            },
+            "query": "What is the total amount? (kit-j2-too-large-{run})"
+          },
+          "expect": {
+            "status": 413,
+            "reason": "upload_too_large",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-service-overloaded",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "An overloaded engine answers the sync 429 service_overloaded envelope with Retry-After 5, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "status-429.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j2-service-overloaded-{run})"
+          },
+          "expect": {
+            "status": 429,
+            "reason": "service_overloaded",
+            "retryAfterSeconds": 5,
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j2-invalid-key",
+      "jid": "J2",
+      "target": "stub",
+      "via": "submit",
+      "description": "A never-issued key answers the sync 401 invalid_api_key envelope, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "key": "invalid",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j2-invalid-key-{run})"
+          },
+          "expect": {
+            "status": 401,
+            "reason": "invalid_api_key",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j3",
+      "jid": "J3",
+      "target": "stub",
+      "via": "poll",
+      "description": "A poll of a never-issued job id answers the 404 job_not_found app envelope, never the framework body.",
+      "steps": [
+        {
+          "op": "poll",
+          "id": "job_0000000000000000000000",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j4",
+      "jid": "J4",
+      "target": "console",
+      "via": "poll",
+      "description": "With the same trusted key, tenantB's poll of tenantA's job answers a 404 job_not_found body identical to an unknown id's except request_id; tenantA still sees its job.",
+      "note": "Console tests only (D-10): the runner supplies the trusted key and the tenant header at runtime; the kit holds neither. SDK runners skip this case.",
+      "steps": [
+        {
+          "op": "poll",
+          "name": "n",
+          "id": "job_0000000000000000000000",
+          "key": "trusted",
+          "tenant": "tenantA",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        },
+        {
+          "op": "submit",
+          "as": "a",
+          "key": "trusted",
+          "tenant": "tenantA",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j4-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "trusted",
+          "tenant": "tenantB",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found",
+            "bodyEqualsExceptRequestId": "n"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "trusted",
+          "tenant": "tenantA",
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "id": "j5",
+      "jid": "J5",
+      "target": "stub",
+      "via": "poll",
+      "description": "A job polled under a different key label answers a 404 job_not_found body identical to an unknown id's except request_id.",
+      "steps": [
+        {
+          "op": "poll",
+          "name": "n",
+          "id": "job_0000000000000000000000",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        },
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j5-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "validOther",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found",
+            "bodyEqualsExceptRequestId": "n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j6",
+      "jid": "J6",
+      "target": "stub",
+      "via": "submit",
+      "description": "Two key labels submit the same file and query and get two independent jobs; each owner polls only its own job.",
+      "note": "L1/L2 and singleflight isolation is real-engine-only (D-11).",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j6-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "submit",
+          "as": "b",
+          "key": "validOther",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j6-{run})"
+          },
+          "expect": {
+            "status": 202,
+            "differentJobFrom": "a"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "poll",
+          "job": "b",
+          "key": "validOther",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "validOther",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "b",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j7",
+      "jid": "J7",
+      "target": "stub",
+      "via": "poll",
+      "description": "A job that fails inside the pipeline polls 200 failed, and its error equals the sync 503 upstream_unavailable body for the same input except request_id.",
+      "steps": [
+        {
+          "op": "sync",
+          "name": "s",
+          "request": {
+            "file": {
+              "name": "fail-upstream_run-200.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j7-{run})"
+          },
+          "expect": {
+            "status": 503,
+            "reason": "upstream_unavailable",
+            "retryAfterSeconds": null
+          }
+        },
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "fail-upstream_run-200.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j7-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "failed",
+          "expect": {
+            "status": 200,
+            "embeddedReason": "upstream_unavailable",
+            "embeddedStatus": 503,
+            "errorEqualsSync": "s"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j8",
+      "jid": "J8",
+      "target": "stub",
+      "via": "poll",
+      "description": "Past expires_at the owner's poll answers 404 job_expired while another key label's poll answers 404 job_not_found.",
+      "note": "The result TTL is STUB_JOBS_RESULT_TTL_SECONDS (5 s in stubEnv).",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "run-0.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j8-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "succeeded",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "sleep",
+          "seconds": 6
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 404,
+            "reason": "job_expired"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "validOther",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j9",
+      "jid": "J9",
+      "target": "real",
+      "via": "infra",
+      "description": "A job whose owning replica restarts mid-job is completed by another replica.",
+      "note": "J18 supersedes J9 (handoff §6(3)); never \"restart → job_interrupted\"."
+    },
+    {
+      "id": "j10",
+      "jid": "J10",
+      "target": "stub",
+      "via": "submit",
+      "description": "The same Idempotency-Key with the same payload twice answers one job: the second 202 is a byte-identical replay with Idempotent-Replayed: true and its own X-Request-Id.",
+      "steps": [
+        {
+          "op": "submit",
+          "name": "r",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j10-{run})"
+          },
+          "idempotencyKey": "kit-j10-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": false
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j10-{run})"
+          },
+          "idempotencyKey": "kit-j10-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": true,
+            "sameJobAs": "a",
+            "bodyEquals": "r",
+            "requestIdDiffersFrom": "r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j10-boundary",
+      "jid": "J10",
+      "target": "stub",
+      "via": "submit",
+      "description": "The same Idempotency-Key with the same file and query under a different multipart boundary and an explicit default mode is still a replay.",
+      "note": "D-339 fingerprint over resolved inputs; the stub hashes the raw query string (no canonicalization).",
+      "steps": [
+        {
+          "op": "submit",
+          "name": "r",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j10-boundary-{run})"
+          },
+          "idempotencyKey": "kit-j10-boundary-{run}",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j10-boundary-{run})",
+            "mode": "fast"
+          },
+          "boundary": "docqlsdktestboundary0000000002",
+          "idempotencyKey": "kit-j10-boundary-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": true,
+            "bodyEquals": "r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j11-tenant",
+      "jid": "J11",
+      "target": "stub",
+      "via": "submit",
+      "description": "A submit while the per-account queue cap is exhausted answers 429 queue_full with scope tenant and Retry-After 5, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "queuefull-tenant.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j11-tenant-{run})"
+          },
+          "expect": {
+            "status": 429,
+            "reason": "queue_full",
+            "retryAfterSeconds": 5,
+            "location": false,
+            "scope": "tenant"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j11-global",
+      "jid": "J11",
+      "target": "stub",
+      "via": "submit",
+      "description": "A submit while the global queue cap is exhausted answers 429 queue_full with scope global and Retry-After 5, and no job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "queuefull-global.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j11-global-{run})"
+          },
+          "expect": {
+            "status": 429,
+            "reason": "queue_full",
+            "retryAfterSeconds": 5,
+            "location": false,
+            "scope": "global"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j12",
+      "jid": "J12",
+      "target": "stub",
+      "via": "sync",
+      "description": "POST /v1/query-document is unchanged byte for byte.",
+      "note": "Every sync case in sdk-cases.json runs unchanged.",
+      "ref": "sdk-cases.json"
+    },
+    {
+      "id": "j13",
+      "jid": "J13",
+      "target": "stub",
+      "via": "cancel",
+      "description": "Cancelling a queued job answers 202 with the cancelled object and no Retry-After; the poll shows cancelled.",
+      "note": "Upload deletion and queue-slot release are real-only.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "queue-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j13-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 202,
+            "retryAfterSeconds": null,
+            "jobStatus": "cancelled"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "cancelled"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j13-running",
+      "jid": "J13",
+      "target": "stub",
+      "via": "cancel",
+      "description": "Cancelling a running job answers 202 with the cancelled object.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "run-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j13-running-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "running",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 202,
+            "jobStatus": "cancelled"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j14",
+      "jid": "J14",
+      "target": "real",
+      "via": "cancel",
+      "description": "A cancel reaches the replica that owns a running job.",
+      "note": "Cross-replica cancel: the stub runs as a single replica."
+    },
+    {
+      "id": "j15",
+      "jid": "J15",
+      "target": "stub",
+      "via": "submit",
+      "description": "The same Idempotency-Key with a different file answers 422 idempotency_key_conflict, and no new job exists.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j15-{run})"
+          },
+          "idempotencyKey": "kit-j15-{run}",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKNCAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSID4+CmVuZG9iagoyIDAgb2JqCjw8IC9UeXBlIC9QYWdlcyAvS2lkcyBbMyAwIFIgNCAwIFJdIC9Db3VudCAyID4+CmVuZG9iago="
+            },
+            "query": "What is the total amount? (kit-j15-{run})"
+          },
+          "idempotencyKey": "kit-j15-{run}",
+          "expect": {
+            "status": 422,
+            "reason": "idempotency_key_conflict",
+            "location": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j16",
+      "jid": "J16",
+      "target": "stub",
+      "via": "submit",
+      "description": "A second submit with the same Idempotency-Key while the first is still persisting answers 409 idempotency_in_progress with Retry-After 1; retrying after the first 202 replays the same job, never a phantom id.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "hold-1500.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j16-{run})"
+          },
+          "idempotencyKey": "kit-j16-{run}",
+          "async": true
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "hold-1500.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j16-{run})"
+          },
+          "idempotencyKey": "kit-j16-{run}",
+          "delayBeforeMs": 300,
+          "expect": {
+            "status": 409,
+            "reason": "idempotency_in_progress",
+            "retryAfterSeconds": 1,
+            "location": false
+          }
+        },
+        {
+          "op": "join",
+          "job": "a",
+          "expect": {
+            "status": 202,
+            "replayed": false
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "hold-1500.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j16-{run})"
+          },
+          "idempotencyKey": "kit-j16-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": true,
+            "sameJobAs": "a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j17",
+      "jid": "J17",
+      "target": "stub",
+      "via": "submit",
+      "description": "One key label's Idempotency-Key reused under another key label creates an independent job.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j17-{run})"
+          },
+          "idempotencyKey": "kit-j17-{run}",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "submit",
+          "as": "b",
+          "key": "validOther",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j17-{run})"
+          },
+          "idempotencyKey": "kit-j17-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": false,
+            "differentJobFrom": "a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j18",
+      "jid": "J18",
+      "target": "real",
+      "via": "infra",
+      "description": "A replica killed mid-job does not lose the job.",
+      "note": "Another replica completes the job; its result equals sync."
+    },
+    {
+      "id": "j19",
+      "jid": "J19",
+      "target": "stub",
+      "via": "poll",
+      "description": "A malformed id, an unknown id and a job polled under another key label all answer 404 job_not_found bodies identical except request_id.",
+      "note": "The foreign-tenant form runs as j4; j19-long-id covers a 2000-character id, which DocQL (no param-length limit) and the stub (maxParamLength 16384) both answer with the same 404.",
+      "steps": [
+        {
+          "op": "poll",
+          "name": "m",
+          "id": "not-a-job-id",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        },
+        {
+          "op": "poll",
+          "id": "job_0000000000000000000000",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found",
+            "bodyEqualsExceptRequestId": "m"
+          }
+        },
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j19-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "validOther",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found",
+            "bodyEqualsExceptRequestId": "m"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j19-long-id",
+      "jid": "J19",
+      "target": "stub",
+      "via": "poll",
+      "description": "A 2000-character id answers the same 404 job_not_found body as an unknown short id, except request_id, on GET and DELETE.",
+      "note": "24 D-01/D-02: DocQL/Echo has no param-length limit and the stub sets maxParamLength 16384, so a long id reaches the job routes and never gets a 414.",
+      "steps": [
+        {
+          "op": "poll",
+          "name": "m",
+          "id": "not-a-job-id",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        },
+        {
+          "op": "poll",
+          "id": "job_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found",
+            "bodyEqualsExceptRequestId": "m"
+          }
+        },
+        {
+          "op": "cancel",
+          "id": "job_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found",
+            "bodyEqualsExceptRequestId": "m"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j20",
+      "jid": "J20",
+      "target": "real",
+      "via": "poll",
+      "description": "Queue wait does not consume a job's run budget.",
+      "note": "Queue wait vs run budget is real-only (D-11): the stub has no budget to observe."
+    },
+    {
+      "id": "j21",
+      "jid": "J21",
+      "target": "real",
+      "via": "infra",
+      "description": "The job suite runs against both Redis 7.4 and Valkey 8.",
+      "note": "Every stub job case asserts Cache-Control: no-store through invariant 1."
+    },
+    {
+      "id": "j22-succeeded",
+      "jid": "J22",
+      "target": "stub",
+      "via": "cancel",
+      "description": "Cancelling a succeeded job answers 200 with the unchanged terminal object, result still present.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "run-0.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j22-succeeded-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "name": "p",
+          "job": "a",
+          "until": "succeeded",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "succeeded",
+            "bodyEquals": "p"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j22-failed",
+      "jid": "J22",
+      "target": "stub",
+      "via": "cancel",
+      "description": "Cancelling a failed job answers 200 with the unchanged terminal object.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "fail-upstream_run-0.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j22-failed-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "name": "p",
+          "job": "a",
+          "until": "failed",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "failed",
+            "bodyEquals": "p"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j22-cancelled",
+      "jid": "J22",
+      "target": "stub",
+      "via": "cancel",
+      "description": "Cancelling a cancelled job again answers 200 with the first cancel's object.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "queue-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j22-cancelled-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "cancel",
+          "name": "c",
+          "job": "a",
+          "expect": {
+            "status": 202,
+            "jobStatus": "cancelled"
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "cancelled",
+            "bodyEquals": "c"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j23",
+      "jid": "J23",
+      "target": "stub",
+      "via": "submit",
+      "description": "Resubmitting with a cancelled job's Idempotency-Key replays the original queued receipt byte for byte; the poll still shows cancelled.",
+      "steps": [
+        {
+          "op": "submit",
+          "name": "r",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "queue-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j23-{run})"
+          },
+          "idempotencyKey": "kit-j23-{run}",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "queue-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j23-{run})"
+          },
+          "idempotencyKey": "kit-j23-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": true,
+            "jobStatus": "queued",
+            "bodyEquals": "r"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "cancelled"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j24",
+      "jid": "J24",
+      "target": "stub",
+      "via": "submit",
+      "description": "An idempotent replay answers the original 202 byte for byte with a new X-Request-Id and is not counted against the queue cap.",
+      "steps": [
+        {
+          "op": "submit",
+          "name": "r",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "j24.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j24-{run})"
+          },
+          "idempotencyKey": "kit-j24-{run}",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "queuefull-tenant.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j24-{run})"
+          },
+          "idempotencyKey": "kit-j24-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": true,
+            "bodyEquals": "r",
+            "requestIdDiffersFrom": "r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j25-empty",
+      "jid": "J25",
+      "target": "stub",
+      "via": "submit",
+      "description": "An empty Idempotency-Key answers 422 invalid_params naming the header in metadata.header, never echoing the value.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j25-empty-{run})"
+          },
+          "idempotencyKey": "",
+          "expect": {
+            "status": 422,
+            "reason": "invalid_params",
+            "location": false,
+            "header": "Idempotency-Key"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j25-too-long",
+      "jid": "J25",
+      "target": "stub",
+      "via": "submit",
+      "description": "A 256-byte Idempotency-Key answers 422 invalid_params naming the header in metadata.header.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j25-too-long-{run})"
+          },
+          "idempotencyKey": {
+            "repeat": "a",
+            "length": 256
+          },
+          "expect": {
+            "status": 422,
+            "reason": "invalid_params",
+            "location": false,
+            "header": "Idempotency-Key"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j25-nonprintable",
+      "jid": "J25",
+      "target": "stub",
+      "via": "submit",
+      "description": "An Idempotency-Key with an interior HTAB answers 422 invalid_params naming the header in metadata.header.",
+      "note": "CTL bytes are refused by HTTP clients before sending.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j25-nonprintable-{run})"
+          },
+          "idempotencyKey": "kit\tj25",
+          "expect": {
+            "status": 422,
+            "reason": "invalid_params",
+            "location": false,
+            "header": "Idempotency-Key"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j25-duplicate",
+      "jid": "J25",
+      "target": "stub",
+      "via": "submit",
+      "description": "Two Idempotency-Key header lines answer 422 invalid_params naming the header in metadata.header.",
+      "note": "Two header lines; needs a client that sends duplicate lines over a real socket.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "invoice.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j25-duplicate-{run})"
+          },
+          "idempotencyKey": {
+            "lines": [
+              "kit-j25-a",
+              "kit-j25-b"
+            ]
+          },
+          "expect": {
+            "status": 422,
+            "reason": "invalid_params",
+            "location": false,
+            "header": "Idempotency-Key"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j26",
+      "jid": "J26",
+      "target": "stub",
+      "via": "poll",
+      "description": "Past expires_at the owner sees job_expired, and after the window job_not_found; another key label sees job_not_found throughout.",
+      "note": "The window is STUB_JOBS_EXPIRED_WINDOW_SECONDS (5 s in stubEnv).",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "run-0.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j26-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "succeeded",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "sleep",
+          "seconds": 6
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 404,
+            "reason": "job_expired"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "key": "validOther",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        },
+        {
+          "op": "sleep",
+          "seconds": 5
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 404,
+            "reason": "job_not_found"
+          }
+        }
+      ]
+    },
+    {
+      "id": "j27",
+      "jid": "J27",
+      "target": "stub",
+      "via": "submit",
+      "description": "The 202's metadata.page_count equals the succeeded result's metadata.page_count (credit hold vs metering).",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "pages-3_run-200.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j27-{run})"
+          },
+          "expect": {
+            "status": 202,
+            "pageCount": 3
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "succeeded",
+          "expect": {
+            "status": 200,
+            "pageCount": 3,
+            "resultPageCount": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "j28",
+      "jid": "J28",
+      "target": "stub",
+      "via": "submit",
+      "description": "A definite persist failure at submit answers 503 upstream_unavailable with Retry-After 5 and creates no job; the same key then creates the job.",
+      "note": "Definite upload or record failure (Revision 2026-10-15).",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "persist-503.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j28-{run})"
+          },
+          "idempotencyKey": "kit-j28-{run}",
+          "expect": {
+            "status": 503,
+            "reason": "upstream_unavailable",
+            "retryAfterSeconds": 5,
+            "location": false
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "j28.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j28-{run})"
+          },
+          "idempotencyKey": "kit-j28-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "j28-unknown",
+      "jid": "J28",
+      "target": "stub",
+      "via": "submit",
+      "description": "An outcome-unknown persist answers the same 503 with Retry-After 5 although the job exists; a retry with the same key replays it.",
+      "note": "Revision 2026-10-21: treat every submit 503 as \"a job may exist\" and retry with the same key.",
+      "steps": [
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "persist-unknown.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j28-unknown-{run})"
+          },
+          "idempotencyKey": "kit-j28-unknown-{run}",
+          "expect": {
+            "status": 503,
+            "reason": "upstream_unavailable",
+            "retryAfterSeconds": 5,
+            "location": false
+          }
+        },
+        {
+          "op": "submit",
+          "request": {
+            "file": {
+              "name": "j28u.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j28-unknown-{run})"
+          },
+          "idempotencyKey": "kit-j28-unknown-{run}",
+          "expect": {
+            "status": 202,
+            "replayed": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "j29-interrupted",
+      "jid": "J29",
+      "target": "stub",
+      "via": "poll",
+      "description": "A job past the attempt cap polls 200 failed with an embedded 503 job_interrupted envelope.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "fail-interrupted_run-200.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j29-interrupted-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "failed",
+          "expect": {
+            "status": 200,
+            "embeddedReason": "job_interrupted",
+            "embeddedStatus": 503
+          }
+        }
+      ]
+    },
+    {
+      "id": "j29-aged",
+      "jid": "J29",
+      "target": "stub",
+      "via": "poll",
+      "description": "A job at the max unfinished age with attempts left polls 200 failed with an embedded 503 upstream_unavailable envelope.",
+      "note": "The real condition is the max unfinished age with attempts left (e-keep, handoff §6(3)); the stub stands it in with fail-upstream.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "fail-upstream_run-200.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j29-aged-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "failed",
+          "expect": {
+            "status": 200,
+            "embeddedReason": "upstream_unavailable",
+            "embeddedStatus": 503
+          }
+        }
+      ]
+    },
+    {
+      "id": "j30",
+      "jid": "J30",
+      "target": "stub",
+      "via": "cancel",
+      "description": "A cancel racing completion loses: the first terminal transition wins, so the DELETE answers 200 succeeded and the poll agrees.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "cancel-late_run-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-j30-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "until": "running",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "succeeded"
+          }
+        },
+        {
+          "op": "poll",
+          "job": "a",
+          "expect": {
+            "status": 200,
+            "jobStatus": "succeeded"
+          }
+        }
+      ]
+    },
+    {
+      "id": "wait-succeeded",
+      "jid": "J1",
+      "target": "stub",
+      "via": "wait",
+      "description": "wait() on a job that queues, runs and succeeds returns the succeeded outcome.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "queue-500_run-500.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-wait-succeeded-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "wait",
+          "job": "a",
+          "expect": {
+            "outcome": "succeeded"
+          }
+        }
+      ]
+    },
+    {
+      "id": "wait-failed",
+      "jid": "J7",
+      "target": "stub",
+      "via": "wait",
+      "description": "wait() on a job that fails returns the failed outcome carrying upstream_unavailable.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "fail-upstream_run-500.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-wait-failed-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "wait",
+          "job": "a",
+          "expect": {
+            "reason": "upstream_unavailable",
+            "outcome": "failed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "wait-cancelled",
+      "jid": "J13",
+      "target": "stub",
+      "via": "wait",
+      "description": "wait() on a cancelled job returns the cancelled outcome and stops polling.",
+      "steps": [
+        {
+          "op": "submit",
+          "as": "a",
+          "request": {
+            "file": {
+              "name": "queue-60000.pdf",
+              "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSXSAvQ291bnQgMSA+PgplbmRvYmoK"
+            },
+            "query": "What is the total amount? (kit-wait-cancelled-{run})"
+          },
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "cancel",
+          "job": "a",
+          "expect": {
+            "status": 202
+          }
+        },
+        {
+          "op": "wait",
+          "job": "a",
+          "expect": {
+            "outcome": "cancelled"
+          }
+        }
+      ]
+    }
+  ],
+  "waitCases": [
+    {
+      "id": "w1-succeeded",
+      "description": "queued, running, succeeded: the wait sleeps each Retry-After and returns the succeeded outcome.",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002411"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002412"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "x-request-id": "00000000-0000-4000-8000-000000002413"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n"
+        }
+      ],
+      "expect": {
+        "outcome": "succeeded",
+        "sleepsSeconds": [
+          2,
+          2
+        ],
+        "deletes": 0
+      }
+    },
+    {
+      "id": "w2-failed",
+      "description": "queued, running, failed: the wait returns the failed outcome with the embedded upstream_unavailable reason.",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002421"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002422"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "x-request-id": "00000000-0000-4000-8000-000000002423"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"failed\",\"metadata\":{\"page_count\":3,\"pages_done\":2,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"error\":{\"error_info\":\"an upstream provider is unavailable\",\"status_code\":503,\"metadata\":{\"reason\":\"upstream_unavailable\",\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n"
+        }
+      ],
+      "expect": {
+        "outcome": "failed",
+        "reason": "upstream_unavailable",
+        "sleepsSeconds": [
+          2,
+          2
+        ],
+        "deletes": 0
+      }
+    },
+    {
+      "id": "w3-cancelled",
+      "description": "queued, cancelled: cancelled is terminal, so the wait stops and returns the cancelled outcome.",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002431"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "x-request-id": "00000000-0000-4000-8000-000000002432"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"cancelled\",\"metadata\":{\"page_count\":3,\"pages_done\":2,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\"}\n"
+        }
+      ],
+      "expect": {
+        "outcome": "cancelled",
+        "sleepsSeconds": [
+          2
+        ],
+        "deletes": 0
+      }
+    },
+    {
+      "id": "w4-expired",
+      "description": "queued, then 404 job_expired: the wait ends with an error carrying job_expired.",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002441"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 404,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "x-request-id": "00000000-0000-4000-8000-000000002442"
+          },
+          "bodyUtf8": "{\"error_info\":\"the job has expired\",\"status_code\":404,\"metadata\":{\"reason\":\"job_expired\",\"request_id\":\"00000000-0000-4000-8000-000000002442\"}}\n"
+        }
+      ],
+      "expect": {
+        "outcome": "error",
+        "reason": "job_expired",
+        "sleepsSeconds": [
+          2
+        ],
+        "deletes": 0
+      }
+    },
+    {
+      "id": "w5-not-found",
+      "description": "running, then 404 job_not_found: the wait ends with an error carrying job_not_found.",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002451"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 404,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "x-request-id": "00000000-0000-4000-8000-000000002452"
+          },
+          "bodyUtf8": "{\"error_info\":\"the job was not found\",\"status_code\":404,\"metadata\":{\"reason\":\"job_not_found\",\"request_id\":\"00000000-0000-4000-8000-000000002452\"}}\n"
+        }
+      ],
+      "expect": {
+        "outcome": "error",
+        "reason": "job_not_found",
+        "sleepsSeconds": [
+          2
+        ],
+        "deletes": 0
+      }
+    },
+    {
+      "id": "w6-poll-429",
+      "description": "running, then a gateway poll 429 rate_limit_exceeded with Retry-After 3 and no x-ratelimit headers (OD-3), then succeeded: the wait honours the 429's Retry-After and continues.",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "2",
+            "x-request-id": "00000000-0000-4000-8000-000000002461"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n"
+        },
+        {
+          "status": 429,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "3",
+            "x-request-id": "00000000-0000-4000-8000-000000002462"
+          },
+          "bodyUtf8": "{\"error_info\":\"the account exceeded its requests-per-minute limit, retry after the delay in Retry-After\",\"status_code\":429,\"metadata\":{\"reason\":\"rate_limit_exceeded\",\"request_id\":\"00000000-0000-4000-8000-000000002462\"}}\n"
+        },
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "x-request-id": "00000000-0000-4000-8000-000000002463"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n"
+        }
+      ],
+      "expect": {
+        "outcome": "succeeded",
+        "sleepsSeconds": [
+          2,
+          3
+        ],
+        "deletes": 0
+      }
+    },
+    {
+      "id": "w7-timeout",
+      "description": "running forever: the wait gives up at the 15-minute default timeout and never sends DELETE (OD-5).",
+      "jobId": "job_0123456789ABCDEFGHIJKL",
+      "responses": [
+        {
+          "status": 200,
+          "headers": {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            "retry-after": "5",
+            "x-request-id": "00000000-0000-4000-8000-000000002471"
+          },
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n"
+        }
+      ],
+      "repeatLast": true,
+      "expect": {
+        "outcome": "timeout",
+        "minElapsedSeconds": 900,
+        "deletes": 0
+      }
+    }
+  ],
+  "decodeCases": [
+    {
+      "id": "job-202-queued",
+      "status": 202,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "location": "/v1/jobs/job_0123456789ABCDEFGHIJKL",
+        "retry-after": "2",
+        "x-request-id": "00000000-0000-4000-8000-000000002301"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n",
+      "expect": {
+        "status": 202,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002301",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "queued"
+      }
+    },
+    {
+      "id": "job-202-replayed",
+      "status": 202,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "idempotent-replayed": "true",
+        "location": "/v1/jobs/job_0123456789ABCDEFGHIJKL",
+        "retry-after": "2",
+        "x-request-id": "00000000-0000-4000-8000-000000002302"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n",
+      "expect": {
+        "status": 202,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002302",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "queued"
+      }
+    },
+    {
+      "id": "job-200-queued",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "retry-after": "2",
+        "x-request-id": "00000000-0000-4000-8000-000000002303"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"queued\",\"metadata\":{\"page_count\":3,\"pages_done\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":null,\"finished_at\":null,\"expires_at\":null}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002303",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "queued"
+      }
+    },
+    {
+      "id": "job-200-running",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "retry-after": "2",
+        "x-request-id": "00000000-0000-4000-8000-000000002304"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002304",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "running"
+      }
+    },
+    {
+      "id": "job-200-succeeded",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002305"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002305",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "succeeded"
+      }
+    },
+    {
+      "id": "job-200-failed-upstream",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002306"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"failed\",\"metadata\":{\"page_count\":3,\"pages_done\":2,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"error\":{\"error_info\":\"an upstream provider is unavailable\",\"status_code\":503,\"metadata\":{\"reason\":\"upstream_unavailable\",\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002306",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "failed"
+      }
+    },
+    {
+      "id": "job-200-failed-interrupted",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002307"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"failed\",\"metadata\":{\"page_count\":3,\"pages_done\":2,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"error\":{\"error_info\":\"the job was interrupted before it could complete, resubmit it\",\"status_code\":503,\"metadata\":{\"reason\":\"job_interrupted\",\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002307",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "failed"
+      }
+    },
+    {
+      "id": "job-200-cancelled",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002308"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"cancelled\",\"metadata\":{\"page_count\":3,\"pages_done\":2,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\"}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002308",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "cancelled"
+      }
+    },
+    {
+      "id": "job-delete-202-cancelled",
+      "status": 202,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002309"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"cancelled\",\"metadata\":{\"page_count\":3,\"pages_done\":2,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\"}\n",
+      "expect": {
+        "status": 202,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002309",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "cancelled"
+      }
+    },
+    {
+      "id": "job-delete-202-running",
+      "status": 202,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002310"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"running\",\"metadata\":{\"page_count\":3,\"pages_done\":1,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":null,\"expires_at\":null}\n",
+      "expect": {
+        "status": 202,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002310",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "running"
+      }
+    },
+    {
+      "id": "job-delete-200-terminal",
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002311"
+      },
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n",
+      "expect": {
+        "status": 200,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002311",
+        "jobId": "job_0123456789ABCDEFGHIJKL",
+        "jobStatus": "succeeded"
+      }
+    },
+    {
+      "id": "job-404-not-found",
+      "status": 404,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002312"
+      },
+      "bodyUtf8": "{\"error_info\":\"the job was not found\",\"status_code\":404,\"metadata\":{\"reason\":\"job_not_found\",\"request_id\":\"00000000-0000-4000-8000-000000002312\"}}\n",
+      "expect": {
+        "status": 404,
+        "reason": "job_not_found",
+        "requestId": "00000000-0000-4000-8000-000000002312"
+      }
+    },
+    {
+      "id": "job-404-expired",
+      "status": 404,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002313"
+      },
+      "bodyUtf8": "{\"error_info\":\"the job has expired\",\"status_code\":404,\"metadata\":{\"reason\":\"job_expired\",\"request_id\":\"00000000-0000-4000-8000-000000002313\"}}\n",
+      "expect": {
+        "status": 404,
+        "reason": "job_expired",
+        "requestId": "00000000-0000-4000-8000-000000002313"
+      }
+    },
+    {
+      "id": "job-409-idempotency-in-progress",
+      "status": 409,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "retry-after": "1",
+        "x-request-id": "00000000-0000-4000-8000-000000002314"
+      },
+      "bodyUtf8": "{\"error_info\":\"a request with this Idempotency-Key is still being processed, retry after the delay in Retry-After\",\"status_code\":409,\"metadata\":{\"reason\":\"idempotency_in_progress\",\"request_id\":\"00000000-0000-4000-8000-000000002314\"}}\n",
+      "expect": {
+        "status": 409,
+        "reason": "idempotency_in_progress",
+        "requestId": "00000000-0000-4000-8000-000000002314"
+      }
+    },
+    {
+      "id": "job-422-idempotency-key-conflict",
+      "status": 422,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002315"
+      },
+      "bodyUtf8": "{\"error_info\":\"the Idempotency-Key was already used with a different request\",\"status_code\":422,\"metadata\":{\"reason\":\"idempotency_key_conflict\",\"request_id\":\"00000000-0000-4000-8000-000000002315\"}}\n",
+      "expect": {
+        "status": 422,
+        "reason": "idempotency_key_conflict",
+        "requestId": "00000000-0000-4000-8000-000000002315"
+      }
+    },
+    {
+      "id": "job-422-idempotency-key-malformed",
+      "status": 422,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002316"
+      },
+      "bodyUtf8": "{\"error_info\":\"the params are not valid\",\"status_code\":422,\"metadata\":{\"header\":\"Idempotency-Key\",\"reason\":\"invalid_params\",\"request_id\":\"00000000-0000-4000-8000-000000002316\"}}\n",
+      "expect": {
+        "status": 422,
+        "reason": "invalid_params",
+        "requestId": "00000000-0000-4000-8000-000000002316"
+      }
+    },
+    {
+      "id": "job-429-queue-full-tenant",
+      "status": 429,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "retry-after": "5",
+        "x-request-id": "00000000-0000-4000-8000-000000002317"
+      },
+      "bodyUtf8": "{\"error_info\":\"the job queue is full, retry after the delay in Retry-After\",\"status_code\":429,\"metadata\":{\"reason\":\"queue_full\",\"request_id\":\"00000000-0000-4000-8000-000000002317\",\"scope\":\"tenant\"}}\n",
+      "expect": {
+        "status": 429,
+        "reason": "queue_full",
+        "requestId": "00000000-0000-4000-8000-000000002317"
+      }
+    },
+    {
+      "id": "job-429-queue-full-global",
+      "status": 429,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "retry-after": "5",
+        "x-request-id": "00000000-0000-4000-8000-000000002318"
+      },
+      "bodyUtf8": "{\"error_info\":\"the job queue is full, retry after the delay in Retry-After\",\"status_code\":429,\"metadata\":{\"reason\":\"queue_full\",\"request_id\":\"00000000-0000-4000-8000-000000002318\",\"scope\":\"global\"}}\n",
+      "expect": {
+        "status": 429,
+        "reason": "queue_full",
+        "requestId": "00000000-0000-4000-8000-000000002318"
+      }
+    },
+    {
+      "id": "job-503-submit",
+      "status": 503,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "retry-after": "5",
+        "x-request-id": "00000000-0000-4000-8000-000000002319"
+      },
+      "bodyUtf8": "{\"error_info\":\"an upstream provider is unavailable\",\"status_code\":503,\"metadata\":{\"reason\":\"upstream_unavailable\",\"request_id\":\"00000000-0000-4000-8000-000000002319\"}}\n",
+      "expect": {
+        "status": 503,
+        "reason": "upstream_unavailable",
+        "requestId": "00000000-0000-4000-8000-000000002319"
+      }
+    },
+    {
+      "id": "job-503-poll",
+      "status": 503,
+      "headers": {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002320"
+      },
+      "bodyUtf8": "{\"error_info\":\"an upstream provider is unavailable\",\"status_code\":503,\"metadata\":{\"reason\":\"upstream_unavailable\",\"request_id\":\"00000000-0000-4000-8000-000000002320\"}}\n",
+      "expect": {
+        "status": 503,
+        "reason": "upstream_unavailable",
+        "requestId": "00000000-0000-4000-8000-000000002320"
+      }
+    },
+    {
+      "id": "job-404-jobs-off",
+      "status": 404,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002321"
+      },
+      "bodyUtf8": "{\"detail\":\"Not Found\"}\n",
+      "expect": {
+        "status": 404,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002321"
+      }
+    },
+    {
+      "id": "job-405",
+      "status": 405,
+      "headers": {
+        "content-type": "application/json",
+        "x-request-id": "00000000-0000-4000-8000-000000002322"
+      },
+      "bodyUtf8": "{\"detail\":\"Method Not Allowed\"}\n",
+      "expect": {
+        "status": 405,
+        "reason": null,
+        "requestId": "00000000-0000-4000-8000-000000002322"
+      }
+    }
+  ]
+}

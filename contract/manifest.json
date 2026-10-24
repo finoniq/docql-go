@@ -6,6 +6,7 @@
     "golden/mode-standard.bin": "29b17fa88165fc581fb5a1b023ddca91bf7ee12ac1abb989c2c2db0be3a2ee27",
     "golden/prompt.bin": "c0add1a6a341fbb20483e3d6424b04a526474b3e3f0b524fb7e1912c732fa8d0",
     "golden/thai-query.bin": "ab605d2ab5e2b87a209e30dd53f9e31390ede96dd010e80955a616bfa232710f",
-    "sdk-cases.json": "9762db37f8881822606cf0918584625d4bf9f667e5a8eab00b438eecb6f2b333"
+    "job-cases.json": "5d9883d010264b54591673abdc46c33bf0ca7ca74493bd42c5f891926e7f5003",
+    "sdk-cases.json": "c639726427052b1c6b388794fb324078cfe4149ac1994f1d86e5b87f205a1938"
   }
 }

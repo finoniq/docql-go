@@ -10,8 +10,11 @@ import (
 	"testing"
 )
 
-// TestConstantsReasons pins the D-08 reason set: exactly 14 distinct values,
-// equal to the non-null expect.reason values of the vendored case list.
+// TestConstantsReasons pins the D-08/D-09 reason set: exactly 22 distinct
+// values, equal to the union of the non-null reasons of both vendored kit
+// files — sdk-cases.json (cases, decodeCases) and job-cases.json (the reason
+// table, decodeCases, every job step's reason and embeddedReason, and every
+// wait case's reason).
 func TestConstantsReasons(t *testing.T) {
 	reasons := []string{
 		ReasonInvalidAPIKey,
@@ -28,32 +31,60 @@ func TestConstantsReasons(t *testing.T) {
 		ReasonServiceOverloaded,
 		ReasonUpstreamUnavailable,
 		ReasonUpstreamAuthFailed,
+		ReasonConcurrencyLimitExceeded,
+		ReasonRateLimitExceeded,
+		ReasonJobNotFound,
+		ReasonJobExpired,
+		ReasonQueueFull,
+		ReasonIdempotencyKeyConflict,
+		ReasonIdempotencyInProgress,
+		ReasonJobInterrupted,
 	}
-	if len(reasons) != 14 {
-		t.Fatalf("the constant slice has %d entries, want 14", len(reasons))
+	if len(reasons) != 22 {
+		t.Fatalf("the constant slice has %d entries, want 22", len(reasons))
 	}
 	got := make(map[string]struct{}, len(reasons))
 	for _, r := range reasons {
 		got[r] = struct{}{}
 	}
-	if len(got) != 14 {
-		t.Fatalf("the constants carry %d distinct values, want 14", len(got))
+	if len(got) != 22 {
+		t.Fatalf("the constants carry %d distinct values, want 22", len(got))
 	}
 
-	kit := loadSDKCases(t)
 	want := make(map[string]struct{})
-	for _, c := range kit.Cases {
-		if c.Expect.Reason != nil {
-			want[*c.Expect.Reason] = struct{}{}
+	add := func(r *string) {
+		if r != nil {
+			want[*r] = struct{}{}
 		}
+	}
+	kit := loadSDKCases(t)
+	for _, c := range kit.Cases {
+		add(c.Expect.Reason)
 	}
 	for _, c := range loadDecodeCases(t) {
-		if c.Expect.Reason != nil {
-			want[*c.Expect.Reason] = struct{}{}
+		add(c.Expect.Reason)
+	}
+	jobs := loadJobCases(t)
+	for _, e := range jobs.Reasons.Entries {
+		r := e.Reason
+		add(&r)
+	}
+	for _, c := range jobs.DecodeCases {
+		add(c.Expect.Reason)
+	}
+	for _, c := range jobs.Cases {
+		for _, step := range c.Steps {
+			if step.Expect != nil {
+				add(step.Expect.Reason)
+				add(step.Expect.EmbeddedReason)
+			}
 		}
 	}
-	if len(want) != 14 {
-		t.Fatalf("the vendored kit names %d distinct non-null reasons, want 14", len(want))
+	for _, c := range jobs.WaitCases {
+		add(c.Expect.Reason)
+	}
+	if len(want) != 22 {
+		t.Fatalf("the vendored kit names %d distinct non-null reasons, want 22", len(want))
 	}
 	for r := range got {
 		if _, ok := want[r]; !ok {
@@ -78,6 +109,9 @@ func TestSurfaceExported(t *testing.T) {
 		"ReasonMissingQueryOrPrompt", "ReasonInvalidParams", "ReasonUnsupportedFileType",
 		"ReasonCorruptedFile", "ReasonDocumentExceedsTimeBudget", "ReasonServiceOverloaded",
 		"ReasonUpstreamUnavailable", "ReasonUpstreamAuthFailed",
+		"ReasonConcurrencyLimitExceeded", "ReasonRateLimitExceeded",
+		"ReasonJobNotFound", "ReasonJobExpired", "ReasonQueueFull",
+		"ReasonIdempotencyKeyConflict", "ReasonIdempotencyInProgress", "ReasonJobInterrupted",
 	}
 	wantVariables := []string{
 		"ErrMissingAPIKey", "ErrInvalidAPIURL", "ErrInvalidTimeout", "ErrNilContext",
