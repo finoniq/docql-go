@@ -134,10 +134,45 @@ func TestSurfaceExported(t *testing.T) {
 		"Error":       {"Status", "Reason", "RequestID", "RetryAfter", "Retryable", "Message", "Body"},
 	}
 
-	gotConstants, gotVariables, gotTypes := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	gotFunctions, gotMethods, gotFields := map[string]bool{}, map[string]bool{}, map[string]map[string]bool{}
-	for typ := range wantFields {
-		gotFields[typ] = map[string]bool{}
+	got := parseSurface(t)
+
+	compare := func(kind string, want []string, got map[string]bool) {
+		t.Helper()
+		gotNames := make([]string, 0, len(got))
+		for name := range got {
+			gotNames = append(gotNames, name)
+		}
+		sort.Strings(gotNames)
+		wantSorted := append([]string(nil), want...)
+		sort.Strings(wantSorted)
+		if strings.Join(gotNames, ",") != strings.Join(wantSorted, ",") {
+			t.Errorf("%s surface drifted:\n got: %s\nwant: %s", kind, strings.Join(gotNames, ", "), strings.Join(wantSorted, ", "))
+		}
+	}
+	compare("constants", wantConstants, got.constants)
+	compare("variables", wantVariables, got.variables)
+	compare("types", wantTypes, got.types)
+	compare("functions", wantFunctions, got.functions)
+	compare("methods", wantMethods, got.methods)
+	for typ, wantList := range wantFields {
+		compare("fields of "+typ, wantList, got.fields[typ])
+	}
+}
+
+// packageSurface is the exported surface of the package's non-test .go
+// files: constants, variables, types, functions, methods on exported
+// receivers, and the exported fields of every exported struct type.
+type packageSurface struct {
+	constants, variables, types, functions, methods map[string]bool
+	fields                                          map[string]map[string]bool
+}
+
+// parseSurface walks the package's non-test .go files with go/parser.
+func parseSurface(t *testing.T) packageSurface {
+	t.Helper()
+	got := packageSurface{
+		constants: map[string]bool{}, variables: map[string]bool{}, types: map[string]bool{},
+		functions: map[string]bool{}, methods: map[string]bool{}, fields: map[string]map[string]bool{},
 	}
 
 	files, err := filepath.Glob("*.go")
@@ -169,14 +204,13 @@ func TestSurfaceExported(t *testing.T) {
 						if !ast.IsExported(s.Name.Name) {
 							continue
 						}
-						gotTypes[s.Name.Name] = true
+						got.types[s.Name.Name] = true
 						if st, ok := s.Type.(*ast.StructType); ok {
-							if _, tracked := wantFields[s.Name.Name]; tracked {
-								for _, field := range st.Fields.List {
-									for _, name := range field.Names {
-										if ast.IsExported(name.Name) {
-											gotFields[s.Name.Name][name.Name] = true
-										}
+							got.fields[s.Name.Name] = map[string]bool{}
+							for _, field := range st.Fields.List {
+								for _, name := range field.Names {
+									if ast.IsExported(name.Name) {
+										got.fields[s.Name.Name][name.Name] = true
 									}
 								}
 							}
@@ -188,9 +222,9 @@ func TestSurfaceExported(t *testing.T) {
 							}
 							switch d.Tok {
 							case token.CONST:
-								gotConstants[name.Name] = true
+								got.constants[name.Name] = true
 							case token.VAR:
-								gotVariables[name.Name] = true
+								got.variables[name.Name] = true
 							}
 						}
 					}
@@ -201,7 +235,7 @@ func TestSurfaceExported(t *testing.T) {
 					continue
 				}
 				if d.Recv == nil || len(d.Recv.List) == 0 {
-					gotFunctions[name] = true
+					got.functions[name] = true
 					continue
 				}
 				recvType := ""
@@ -219,30 +253,62 @@ func TestSurfaceExported(t *testing.T) {
 				if recvType == "" || !ast.IsExported(recvType) {
 					continue
 				}
-				gotMethods[recvType+"."+name] = true
+				got.methods[recvType+"."+name] = true
 			}
 		}
 	}
+	return got
+}
 
-	compare := func(kind string, want []string, got map[string]bool) {
+// TestSurfaceV01Subset proves JSDK-03 (additive only): every name of the
+// v0.1.0 public surface — the TestSurfaceExported lists as tagged at v0.1.0,
+// frozen here verbatim — is still exported. TestSurfaceExported stays exact
+// for the current surface; this list never changes.
+func TestSurfaceV01Subset(t *testing.T) {
+	v01Constants := []string{
+		"Version", "ModeFast", "ModeStandard",
+		"ReasonInvalidAPIKey", "ReasonUploadTooLarge", "ReasonUnsupportedMediaType",
+		"ReasonMissingFilePart", "ReasonMissingBodyField", "ReasonBodyNotJSON",
+		"ReasonMissingQueryOrPrompt", "ReasonInvalidParams", "ReasonUnsupportedFileType",
+		"ReasonCorruptedFile", "ReasonDocumentExceedsTimeBudget", "ReasonServiceOverloaded",
+		"ReasonUpstreamUnavailable", "ReasonUpstreamAuthFailed",
+	}
+	v01Variables := []string{
+		"ErrMissingAPIKey", "ErrInvalidAPIURL", "ErrInvalidTimeout", "ErrNilContext",
+		"ErrNoInstruction", "ErrNoFile", "ErrMissingFilename",
+	}
+	v01Types := []string{
+		"Client", "Option", "QueryOption", "Mode", "Instruction", "File",
+		"QueryResult", "Error", "ConnectionError",
+	}
+	v01Functions := []string{
+		"NewClient", "WithAPIKey", "WithAPIURL", "WithTimeout", "WithHTTPClient",
+		"WithMode", "WithFilename", "Query", "Prompt", "FilePath", "FileBytes", "FileReader",
+	}
+	v01Methods := []string{
+		"Client.QueryDocument", "Client.String", "Client.GoString",
+		"Error.Error", "ConnectionError.Error", "ConnectionError.Unwrap", "ConnectionError.Timeout",
+	}
+	v01Fields := map[string][]string{
+		"QueryResult": {"Data", "RequestID", "PageCount", "PagesOCR", "Metadata"},
+		"Error":       {"Status", "Reason", "RequestID", "RetryAfter", "Retryable", "Message", "Body"},
+	}
+
+	got := parseSurface(t)
+	subset := func(kind string, want []string, have map[string]bool) {
 		t.Helper()
-		gotNames := make([]string, 0, len(got))
-		for name := range got {
-			gotNames = append(gotNames, name)
-		}
-		sort.Strings(gotNames)
-		wantSorted := append([]string(nil), want...)
-		sort.Strings(wantSorted)
-		if strings.Join(gotNames, ",") != strings.Join(wantSorted, ",") {
-			t.Errorf("%s surface drifted:\n got: %s\nwant: %s", kind, strings.Join(gotNames, ", "), strings.Join(wantSorted, ", "))
+		for _, name := range want {
+			if !have[name] {
+				t.Errorf("v0.1.0 %s %s is no longer exported", kind, name)
+			}
 		}
 	}
-	compare("constants", wantConstants, gotConstants)
-	compare("variables", wantVariables, gotVariables)
-	compare("types", wantTypes, gotTypes)
-	compare("functions", wantFunctions, gotFunctions)
-	compare("methods", wantMethods, gotMethods)
-	for typ, wantList := range wantFields {
-		compare("fields of "+typ, wantList, gotFields[typ])
+	subset("constant", v01Constants, got.constants)
+	subset("variable", v01Variables, got.variables)
+	subset("type", v01Types, got.types)
+	subset("function", v01Functions, got.functions)
+	subset("method", v01Methods, got.methods)
+	for typ, names := range v01Fields {
+		subset("field of "+typ, names, got.fields[typ])
 	}
 }

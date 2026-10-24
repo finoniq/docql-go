@@ -38,8 +38,25 @@ var sdkTransport = sync.OnceValue(newSDKTransport)
 
 // newSDKTransport is the body of sdkTransport, separate so tests can rebuild
 // the OnceValue after replacing http.DefaultTransport.
+//
+// The assertion is checked (CR-01): httpmock, otelhttp and VCR recorders
+// replace http.DefaultTransport with their own RoundTripper, and an unchecked
+// assertion panicked inside the OnceValue, which re-panics on every later
+// call. When DefaultTransport is not a *http.Transport the SDK builds its own
+// with net/http's default field values instead of wrapping the replacement.
 func newSDKTransport() http.RoundTripper {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	var tr *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = dt.Clone()
+	} else {
+		tr = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
 	tr.DialContext = sdkDialer.DialContext
 	tr.TLSHandshakeTimeout = connectTimeout
 	return tr

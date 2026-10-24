@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -354,5 +355,91 @@ func TestDecodeBodyLimits(t *testing.T) {
 		if !strings.Contains(surface, "***") {
 			t.Errorf("%s lost the *** marker: %q", name, surface)
 		}
+	}
+}
+
+// kitErrorCases returns the non-2xx decode cases of both vendored kit files,
+// sdk-cases.json v2 then job-cases.json v3.
+func kitErrorCases(t *testing.T) []decodeCase {
+	t.Helper()
+	var out []decodeCase
+	for _, c := range append(loadDecodeCases(t), loadJobCases(t).DecodeCases...) {
+		if c.Status >= 400 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestDecodeRetryAfter429And503 pins JSDK-05 on every 429 and 503 decode case
+// either kit knows: Retryable is true and RetryAfter is the retry-after header
+// in seconds, 0 when the case has no retry-after header.
+func TestDecodeRetryAfter429And503(t *testing.T) {
+	ran := 0
+	for _, c := range kitErrorCases(t) {
+		if c.Status != 429 && c.Status != 503 {
+			continue
+		}
+		ran++
+		t.Run(c.ID, func(t *testing.T) {
+			var want time.Duration
+			if v, ok := c.Headers["retry-after"]; ok {
+				secs, err := strconv.Atoi(v)
+				if err != nil {
+					t.Fatalf("case retry-after %q is not delta-seconds: %v", v, err)
+				}
+				want = time.Duration(secs) * time.Second
+			}
+			err := decodeError(c.Status, caseHeader(c), []byte(c.BodyUTF8), "k")
+			if !err.Retryable {
+				t.Error("Retryable = false, want true")
+			}
+			if err.RetryAfter != want {
+				t.Errorf("RetryAfter = %s, want %s", err.RetryAfter, want)
+			}
+		})
+	}
+	if ran == 0 {
+		t.Fatal("the vendored kits have no 429 or 503 decode case")
+	}
+}
+
+// TestDecodeJobErrorCases runs every job-cases.json decode case with status
+// >= 400 through decodeError: status, reason ("" where the kit expects null,
+// as for job-404-jobs-off and job-405) and request id as the kit expects, and
+// Retryable only for 429 and 503.
+func TestDecodeJobErrorCases(t *testing.T) {
+	ran := 0
+	for _, c := range loadJobCases(t).DecodeCases {
+		if c.Status < 400 {
+			continue
+		}
+		ran++
+		t.Run(c.ID, func(t *testing.T) {
+			err := decodeError(c.Status, caseHeader(c), []byte(c.BodyUTF8), "k")
+			if err.Status != c.Expect.Status {
+				t.Errorf("Status = %d, want %d", err.Status, c.Expect.Status)
+			}
+			wantReason := ""
+			if c.Expect.Reason != nil {
+				wantReason = *c.Expect.Reason
+			}
+			if err.Reason != wantReason {
+				t.Errorf("Reason = %q, want %q", err.Reason, wantReason)
+			}
+			wantID := ""
+			if c.Expect.RequestID != nil {
+				wantID = *c.Expect.RequestID
+			}
+			if err.RequestID != wantID {
+				t.Errorf("RequestID = %q, want %q", err.RequestID, wantID)
+			}
+			if wantRetryable := c.Status == 429 || c.Status == 503; err.Retryable != wantRetryable {
+				t.Errorf("Retryable = %v, want %v", err.Retryable, wantRetryable)
+			}
+		})
+	}
+	if ran == 0 {
+		t.Fatal("job-cases.json has no error decode case")
 	}
 }

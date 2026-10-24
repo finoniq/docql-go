@@ -14,6 +14,16 @@
 # Bump only when the sdk-cases version changes (D-06): the vendored kit and the pin
 # move together in one commit, so the manifest sha256 stays tied to the image digest.
 #
+# --verify boots the image with the stubEnv of the vendored contract/job-cases.json
+# (the superset of the sdk-cases.json recipe; exit 2 if the two drift apart) and also
+# checks GET /__stub/job-cases against the manifest's job-cases.json entry.
+#
+# DOCQL_STUB_IMAGE_OVERRIDE=<local image ref> (local only) makes --verify read the kit
+# from an image already on this machine instead of the pin: refused when CI or
+# GITHUB_ACTIONS is set, never pulled, must pass `docker image inspect`, printed to
+# stderr as `STUB_IMAGE_OVERRIDE <ref> <id>`. Bump mode refuses it: the pin only ever
+# moves to a published GHCR digest, and contract/stub-image is never touched by --verify.
+#
 # Output: CONTRACT_KIT_OK <n> files on success; CONTRACT_KIT_MISMATCH <name> and
 # exit 1 when a served file differs from (or is missing from) the vendored copy.
 # The DOCQL_INTERNAL_KEY is generated at runtime and never printed (T-10-02).
@@ -28,6 +38,7 @@ TMP=$(mktemp -d)
 trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 
 PIN_RE='^ghcr\.io/finoniq/docql-stub:sha-[0-9a-f]{7}@sha256:[0-9a-f]{64}$'
+OVERRIDE_RE='^[A-Za-z0-9][A-Za-z0-9._/:@-]*$'
 usage() {
   echo "usage: scripts/bump-stub.sh <pin> | scripts/bump-stub.sh --verify" >&2
   echo "  <pin> must match ghcr.io/finoniq/docql-stub:sha-<7 hex>@sha256:<64 hex>" >&2
@@ -35,22 +46,47 @@ usage() {
 }
 
 [ "$#" -eq 1 ] || usage
+OVERRIDE=${DOCQL_STUB_IMAGE_OVERRIDE:-}
 if [ "$1" = "--verify" ]; then
   MODE=verify
-  if [ ! -f "$CONTRACT_DIR/stub-image" ]; then
-    echo "contract/stub-image is missing — run scripts/bump-stub.sh <pin> first" >&2
-    exit 2
-  fi
-  PIN=$(cat "$CONTRACT_DIR/stub-image")
 else
   MODE=bump
+  if [ -n "$OVERRIDE" ]; then
+    echo "bump takes a GHCR pin only; unset DOCQL_STUB_IMAGE_OVERRIDE" >&2
+    exit 2
+  fi
   PIN=$1
 fi
 
-if ! [[ "$PIN" =~ $PIN_RE ]]; then
-  echo "invalid pin: $PIN" >&2
-  echo "expected: ghcr.io/finoniq/docql-stub:sha-<7 hex>@sha256:<64 hex>" >&2
-  exit 2
+if [ -n "$OVERRIDE" ]; then
+  if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "DOCQL_STUB_IMAGE_OVERRIDE is local-only; refused under CI" >&2
+    exit 2
+  fi
+  if ! [[ "$OVERRIDE" =~ $OVERRIDE_RE ]]; then
+    echo "invalid DOCQL_STUB_IMAGE_OVERRIDE: $OVERRIDE" >&2
+    exit 2
+  fi
+  if ! IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$OVERRIDE" 2>/dev/null); then
+    echo "override image not found locally: $OVERRIDE" >&2
+    exit 2
+  fi
+  echo "STUB_IMAGE_OVERRIDE $OVERRIDE $IMAGE_ID" >&2
+  IMAGE=$OVERRIDE
+else
+  if [ "$MODE" = verify ]; then
+    if [ ! -f "$CONTRACT_DIR/stub-image" ]; then
+      echo "contract/stub-image is missing — run scripts/bump-stub.sh <pin> first" >&2
+      exit 2
+    fi
+    PIN=$(cat "$CONTRACT_DIR/stub-image")
+  fi
+  if ! [[ "$PIN" =~ $PIN_RE ]]; then
+    echo "invalid pin: $PIN" >&2
+    echo "expected: ghcr.io/finoniq/docql-stub:sha-<7 hex>@sha256:<64 hex>" >&2
+    exit 2
+  fi
+  IMAGE=$PIN
 fi
 
 # Fresh random key for this run only; never echoed (T-10-02).
@@ -58,21 +94,33 @@ INTERNAL_KEY=$(openssl rand -hex 24)
 
 ENV_FLAGS=()
 if [ "$MODE" = verify ]; then
+  # The job-cases.json recipe must carry every sdk-cases.json key: the same value, or
+  # for a comma list (STUB_EXTRA_KEYS) every one of its entries.
+  if ! jq -e -n --slurpfile sdk "$CONTRACT_DIR/sdk-cases.json" --slurpfile job "$CONTRACT_DIR/job-cases.json" '
+    ($job[0].stubEnv) as $j
+    | all($sdk[0].stubEnv | to_entries[];
+        ($j[.key]) as $v | $v != null and ((.value | split(",")) - ($v | split(",")) | length) == 0)
+  ' >/dev/null; then
+    echo "stubEnv drift between sdk-cases.json and job-cases.json" >&2
+    exit 2
+  fi
   # The vendored stubEnv recipe, one KEY=VALUE line per entry: --verify proves the
   # kit's own recipe boots the image (D-07).
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     ENV_FLAGS+=(-e "$line")
-  done < <(jq -r '.stubEnv | to_entries[] | "\(.key)=\(.value)"' "$CONTRACT_DIR/sdk-cases.json")
+  done < <(jq -r '.stubEnv | to_entries[] | "\(.key)=\(.value)"' "$CONTRACT_DIR/job-cases.json")
 fi
 
-docker pull "$PIN" >/dev/null
+if [ -z "$OVERRIDE" ]; then
+  docker pull "$IMAGE" >/dev/null
+fi
 
 docker run -d --rm --name "$CONTAINER" \
   -p "127.0.0.1:$PORT:8080" \
   -e "DOCQL_INTERNAL_KEY=$INTERNAL_KEY" \
   ${ENV_FLAGS[@]+"${ENV_FLAGS[@]}"} \
-  "$PIN" >/dev/null
+  "$IMAGE" >/dev/null
 
 # Poll /readyz for up to 30 s (a tampered kit fails the image boot, so this gates that too).
 READY=0
@@ -122,6 +170,15 @@ ROUTE_SHA=$(sha256sum "$TMP/cases-route" | cut -d' ' -f1)
 CASES_SHA=$(jq -r '.files["sdk-cases.json"]' "$TMP/kit/manifest.json")
 if [ "$ROUTE_SHA" != "$CASES_SHA" ]; then
   echo "CONTRACT_KIT_MISMATCH sdk-cases.json"
+  exit 1
+fi
+
+# The /__stub/job-cases route must serve the same bytes as the manifest's job-cases.json.
+serve "/__stub/job-cases" "$TMP/job-cases-route" "job-cases.json"
+JOB_ROUTE_SHA=$(sha256sum "$TMP/job-cases-route" | cut -d' ' -f1)
+JOB_CASES_SHA=$(jq -r '.files["job-cases.json"]' "$TMP/kit/manifest.json")
+if [ "$JOB_ROUTE_SHA" != "$JOB_CASES_SHA" ]; then
+  echo "CONTRACT_KIT_MISMATCH job-cases.json"
   exit 1
 fi
 
