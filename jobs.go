@@ -422,7 +422,20 @@ func retryAfterHint(h http.Header) (time.Duration, bool) {
 	return 0, false
 }
 
-// CancelJob is declared without behaviour until its implementation lands.
+// CancelJob asks DocQL to cancel the job, with one DELETE under a 30 s
+// deadline, and returns the Job as the answer states it (OD-10): a 202
+// answers the job right after the cancel request, a 200 a job that was
+// already terminal (cancelling it again answers the same job). Poll with
+// GetJob or Wait to confirm the job reached cancelled. Any other status is an
+// *Error with JobID set. This is the only call that cancels a job.
 func (c *Client) CancelJob(ctx context.Context, jobID string) (*Job, error) {
-	return nil, errors.New("docql: CancelJob is not implemented")
+	path, err := c.jobCall(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	status, h, body, err := c.sendOnce(ctx, http.MethodDelete, path, nil, nil, pollTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return c.jobAnswer(status, h, body, jobID)
 }

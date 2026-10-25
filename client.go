@@ -228,6 +228,9 @@ func (c *Client) QueryDocument(ctx context.Context, file File, instr Instruction
 	for _, opt := range opts {
 		opt(&qs)
 	}
+	if qs.idempotencyKey != nil {
+		return nil, ErrIdempotencyKeyOnQuery
+	}
 	up, err := prepareUpload(file, instr, qs)
 	if err != nil {
 		return nil, err

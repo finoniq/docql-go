@@ -87,20 +87,15 @@ func runToken(t *testing.T) string {
 	return token
 }
 
-// waitKitCases selects the stub-target via:wait cases without a cancel step
-// (CancelJob is not built yet). The selection happens before any subtest
-// starts, so the contract workflow never sees a SKIP line.
+// waitKitCases selects the stub-target via:wait cases. The selection happens
+// before any subtest starts, so the contract workflow never sees a SKIP line.
 func waitKitCases(kit *jobKitFile) []*jobKitCase {
 	var out []*jobKitCase
 	for i := range kit.Cases {
 		c := &kit.Cases[i]
-		if c.Target != "stub" || c.Via != "wait" {
-			continue
+		if c.Target == "stub" && c.Via == "wait" {
+			out = append(out, c)
 		}
-		if slices.ContainsFunc(c.Steps, func(s jobKitStep) bool { return s.Op == "cancel" }) {
-			continue
-		}
-		out = append(out, c)
 	}
 	return out
 }
@@ -161,7 +156,7 @@ func TestContractJobWaitCases(t *testing.T) {
 	for _, c := range cases {
 		ids = append(ids, c.ID)
 	}
-	if want := []string{"wait-succeeded", "wait-failed"}; !slices.Equal(ids, want) {
+	if want := []string{"wait-succeeded", "wait-failed", "wait-cancelled"}; !slices.Equal(ids, want) {
 		t.Fatalf("selected wait cases %v, want %v", ids, want)
 	}
 	run := runToken(t)
@@ -224,6 +219,19 @@ func runWaitKitCase(t *testing.T, kit *jobKitFile, c *jobKitCase, run string) {
 				t.Fatalf("step %d: submitted job without a job id or an idempotency key", i)
 			}
 			jobs[step.As] = job.JobID
+
+		case "cancel":
+			jobID := boundJob(t, jobs, step, i)
+			job, err := client.CancelJob(ctx, jobID)
+			if err != nil {
+				t.Fatalf("step %d: CancelJob: %v", i, err)
+			}
+			if step.Expect.Status != 202 {
+				t.Fatalf("step %d: a wait case cancel expects 202, not %d", i, step.Expect.Status)
+			}
+			if job.JobID != jobID || job.Status != JobStatusCancelled {
+				t.Fatalf("step %d: cancel answered %q %q, want the cancelled job", i, job.JobID, job.Status)
+			}
 
 		case "wait":
 			jobID := boundJob(t, jobs, step, i)
