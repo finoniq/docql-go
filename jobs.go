@@ -398,7 +398,14 @@ func (c *Client) Wait(ctx context.Context, jobID string, opts ...WaitOption) (*J
 			return stopped()
 		case <-t.C:
 		}
-		if ctx.Err() != nil { // the timer and the deadline fired together
+		if ctx.Err() != nil {
+			return stopped()
+		}
+		// The timer and the deadline can fire at the same instant, before
+		// the context's own timer has cancelled it: never poll at or past
+		// the deadline (26-RESEARCH Pitfall 4).
+		if !time.Now().Before(deadline) {
+			<-ctx.Done()
 			return stopped()
 		}
 	}
