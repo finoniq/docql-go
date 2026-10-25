@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The kit's via:wait job cases through the public job methods, against the
@@ -312,4 +313,253 @@ func waitOutcome(t *testing.T, client *Client, rec *recordingTransport, jobID st
 		return "failed", de.Reason
 	}
 	return "error", de.Reason
+}
+
+// countedRequest is one exchange the counting transport saw.
+type countedRequest struct {
+	keys       []string
+	status     int
+	replayed   bool
+	retryAfter string
+}
+
+// countingTransport passes every request to the default transport and
+// records the Idempotency-Key lines it carried and what came back, so the
+// submit tests count the SDK-level requests that reached the stub.
+type countingTransport struct {
+	mu   sync.Mutex
+	seen []countedRequest
+}
+
+func (c *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.seen = append(c.seen, countedRequest{
+		keys:       req.Header.Values("Idempotency-Key"),
+		status:     resp.StatusCode,
+		replayed:   resp.Header.Get("Idempotent-Replayed") == "true",
+		retryAfter: resp.Header.Get("Retry-After"),
+	})
+	c.mu.Unlock()
+	return resp, nil
+}
+
+func (c *countingTransport) snapshot() []countedRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.seen)
+}
+
+func (c *countingTransport) statuses() []int {
+	var out []int
+	for _, r := range c.snapshot() {
+		out = append(out, r.status)
+	}
+	return out
+}
+
+// TestContractJobSubmit runs the public, retrying SubmitDocument against the
+// stub's persist and hold knobs (JSDK-02, D-07), unlike TestContractJobCases,
+// whose wire steps use the single-attempt sendOnce (26-RESEARCH F8). The knobs
+// are filename-based and live because the kit's stubEnv sets
+// STUB_TEST_KNOBS=true: persist-unknown creates the job and still answers 503
+// Retry-After 5 (a same-key retry replays the 202), persist-503 answers 503
+// Retry-After 5 without a job, and hold-1500 keeps the key reserved for
+// 1.5 s, so a concurrent same-key submit gets 409 idempotency_in_progress
+// Retry-After 1. The retry sleeps are real. Every query and key embeds a
+// per-run token, so a rerun against a long-lived stub never replays an
+// earlier run's job.
+func TestContractJobSubmit(t *testing.T) {
+	skipWithoutStub(t)
+	kit := loadJobKit(t)
+	var pdf []byte
+	for _, c := range kit.Cases {
+		if c.ID == "j28-unknown" {
+			pdf = caseFileBytes(t, c.Steps[0].Request.File)
+		}
+	}
+	if len(pdf) == 0 {
+		t.Fatal("kit case j28-unknown carries no document")
+	}
+	run := runToken(t)
+	query := func(name string) Instruction {
+		return Query("What is the total amount? (p26-09-" + name + "-" + run + ")")
+	}
+	key := func(name string) string { return "p26-09-" + name + "-" + run }
+	newClient := func(t *testing.T) (*Client, *countingTransport) {
+		t.Helper()
+		ct := &countingTransport{}
+		c, err := NewClient(WithAPIKey(kit.Keys.Valid), WithAPIURL(stubURL(t)), WithHTTPClient(&http.Client{Transport: ct}))
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		return c, ct
+	}
+	ctx := context.Background()
+
+	t.Run("persist_unknown", func(t *testing.T) {
+		c, ct := newClient(t)
+		defer func() { t.Logf("SDK-level requests: %v", ct.statuses()) }()
+		k := key("persist-unknown")
+		job, err := c.SubmitDocument(ctx, FileBytes(pdf, "persist-unknown.pdf"), query("persist-unknown"), WithIdempotencyKey(k))
+		if err != nil {
+			t.Fatalf("SubmitDocument: %v", err)
+		}
+		if job.Status != JobStatusQueued || job.IdempotencyKey != k || job.JobID == "" {
+			t.Fatalf("got %q %q key %q, want the queued job with the key", job.JobID, job.Status, job.IdempotencyKey)
+		}
+		seen := ct.snapshot()
+		if got := ct.statuses(); !slices.Equal(got, []int{503, 202}) {
+			t.Fatalf("statuses %v, want [503 202]", got)
+		}
+		for i, r := range seen {
+			if !slices.Equal(r.keys, []string{k}) {
+				t.Errorf("request %d keys %q, want [%q]", i+1, r.keys, k)
+			}
+		}
+		if seen[0].retryAfter != "5" || !seen[1].replayed {
+			t.Errorf("the 503 Retry-After %q and replayed %v, want 5 and a replayed 202", seen[0].retryAfter, seen[1].replayed)
+		}
+		// The replayed job is the one DocQL created on the first (503)
+		// attempt, so it exists. The kit's stubEnv keeps a job for 5 s and
+		// the retry slept 5 s, so the owner may already see job_expired;
+		// job_not_found would mean the replay pointed at a job that never
+		// existed.
+		got, err := c.GetJob(ctx, job.JobID)
+		switch {
+		case err == nil:
+			if got.JobID != job.JobID {
+				t.Errorf("GetJob answered job %q, want %q", got.JobID, job.JobID)
+			}
+		default:
+			var de *Error
+			if !errors.As(err, &de) || de.Reason != ReasonJobExpired {
+				t.Errorf("GetJob on the replayed job: %v, want the job or job_expired", err)
+			}
+		}
+	})
+
+	t.Run("persist_503", func(t *testing.T) {
+		c, ct := newClient(t)
+		defer func() { t.Logf("SDK-level requests: %v", ct.statuses()) }()
+		k := key("persist-503")
+		_, err := c.SubmitDocument(ctx, FileBytes(pdf, "persist-503.pdf"), query("persist-503"), WithIdempotencyKey(k))
+		var de *Error
+		if !errors.As(err, &de) {
+			t.Fatalf("got %T %v, want *docql.Error", err, err)
+		}
+		if de.Status != 503 || de.Reason != ReasonUpstreamUnavailable || de.IdempotencyKey != k || de.RetryAfter != 5*time.Second {
+			t.Fatalf("got %d %q key %q Retry-After %s, want 503 upstream_unavailable with the key and 5s", de.Status, de.Reason, de.IdempotencyKey, de.RetryAfter)
+		}
+		if got := ct.statuses(); !slices.Equal(got, []int{503, 503, 503, 503}) {
+			t.Fatalf("statuses %v, want four 503s", got)
+		}
+		for i, r := range ct.snapshot() {
+			if !slices.Equal(r.keys, []string{k}) {
+				t.Errorf("request %d keys %q, want [%q]", i+1, r.keys, k)
+			}
+		}
+	})
+
+	t.Run("same_key_twice", func(t *testing.T) {
+		c, ct := newClient(t)
+		defer func() { t.Logf("SDK-level requests: %v", ct.statuses()) }()
+		k := key("same-key-twice")
+		first, err1 := c.SubmitDocument(ctx, FileBytes(pdf, "twice.pdf"), query("same-key-twice"), WithIdempotencyKey(k))
+		second, err2 := c.SubmitDocument(ctx, FileBytes(pdf, "twice.pdf"), query("same-key-twice"), WithIdempotencyKey(k))
+		if err1 != nil || err2 != nil {
+			t.Fatalf("SubmitDocument: %v, %v", err1, err2)
+		}
+		if first.JobID != second.JobID {
+			t.Errorf("job ids %q and %q, want the same job", first.JobID, second.JobID)
+		}
+		seen := ct.snapshot()
+		if got := ct.statuses(); !slices.Equal(got, []int{202, 202}) {
+			t.Fatalf("statuses %v, want [202 202]", got)
+		}
+		if seen[0].replayed || !seen[1].replayed {
+			t.Errorf("replayed %v %v, want false then true", seen[0].replayed, seen[1].replayed)
+		}
+	})
+
+	t.Run("hold_concurrent", func(t *testing.T) {
+		c, ct := newClient(t)
+		defer func() { t.Logf("SDK-level requests: %v", ct.statuses()) }()
+		k := key("hold-concurrent")
+		var wg sync.WaitGroup
+		jobs := make([]*Job, 2)
+		errs := make([]error, 2)
+		// The kit's j16 starts the second submit 300 ms after the first.
+		for i, delay := range []time.Duration{0, 300 * time.Millisecond} {
+			wg.Go(func() {
+				time.Sleep(delay)
+				jobs[i], errs[i] = c.SubmitDocument(ctx, FileBytes(pdf, "hold-1500.pdf"), query("hold-concurrent"), WithIdempotencyKey(k))
+			})
+		}
+		wg.Wait()
+		if errs[0] != nil || errs[1] != nil {
+			t.Fatalf("SubmitDocument: %v, %v", errs[0], errs[1])
+		}
+		if jobs[0].JobID != jobs[1].JobID || jobs[0].IdempotencyKey != k || jobs[1].IdempotencyKey != k {
+			t.Fatalf("jobs %q/%q keys %q/%q, want one job with the key", jobs[0].JobID, jobs[1].JobID, jobs[0].IdempotencyKey, jobs[1].IdempotencyKey)
+		}
+		seen := ct.snapshot()
+		var conflicts int
+		var replayed []bool
+		for i, r := range seen {
+			if !slices.Equal(r.keys, []string{k}) {
+				t.Errorf("request %d keys %q, want [%q]", i+1, r.keys, k)
+			}
+			switch r.status {
+			case 409:
+				conflicts++
+				if r.retryAfter != "1" {
+					t.Errorf("a 409 with Retry-After %q, want 1", r.retryAfter)
+				}
+			case 202:
+				replayed = append(replayed, r.replayed)
+			default:
+				t.Errorf("request %d answered %d", i+1, r.status)
+			}
+		}
+		if conflicts == 0 {
+			t.Error("no 409 idempotency_in_progress: the second submit did not overlap the hold")
+		}
+		// One fresh 202 (the first submit) and one replay (the second,
+		// after its 409s).
+		slices.SortFunc(replayed, func(a, b bool) int {
+			if a == b {
+				return 0
+			}
+			if !a {
+				return -1
+			}
+			return 1
+		})
+		if !slices.Equal(replayed, []bool{false, true}) {
+			t.Errorf("202 replayed flags %v, want one fresh and one replayed", replayed)
+		}
+	})
+
+	t.Run("non_replayable", func(t *testing.T) {
+		c, ct := newClient(t)
+		defer func() { t.Logf("SDK-level requests: %v", ct.statuses()) }()
+		k := key("non-replayable")
+		pr, pw := io.Pipe()
+		go func() {
+			_, _ = pw.Write(pdf)
+			_ = pw.Close()
+		}()
+		_, err := c.SubmitDocument(ctx, FileReader(pr, "persist-unknown.pdf"), query("non-replayable"), WithIdempotencyKey(k))
+		var de *Error
+		if !errors.As(err, &de) || de.Status != 503 || de.IdempotencyKey != k {
+			t.Fatalf("got %T %v, want the 503 *docql.Error with the key", err, err)
+		}
+		if got := ct.statuses(); !slices.Equal(got, []int{503}) {
+			t.Fatalf("statuses %v, want one 503", got)
+		}
+	})
 }

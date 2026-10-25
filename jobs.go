@@ -2,7 +2,6 @@ package docql
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -75,25 +74,6 @@ func jobPath(id string) (string, error) {
 		return "", ErrNoJobID
 	}
 	return jobsPath + "/" + strings.ReplaceAll(url.PathEscape(id), ".", "%2E"), nil
-}
-
-// newIdempotencyKey returns a fresh Idempotency-Key from crypto/rand (D-07).
-func newIdempotencyKey() string {
-	return rand.Text()
-}
-
-// validateIdempotencyKey applies DocQL's rule: 1-255 bytes, every byte
-// 0x20-0x7E. The error never echoes the key.
-func validateIdempotencyKey(k string) error {
-	if len(k) < 1 || len(k) > 255 {
-		return ErrInvalidIdempotencyKey
-	}
-	for i := 0; i < len(k); i++ {
-		if k[i] < 0x20 || k[i] > 0x7E {
-			return ErrInvalidIdempotencyKey
-		}
-	}
-	return nil
 }
 
 // sendOnce sends exactly one job request and returns the status, headers and
@@ -183,13 +163,35 @@ func (c *Client) jobConnectionError(ctx context.Context, cause error, up *upload
 }
 
 // SubmitDocument uploads one document with an instruction as an async job
-// and returns the queued Job (JSDK-01). It takes the QueryDocument options
-// plus WithIdempotencyKey; without that option it sends a fresh random key.
+// and returns the queued Job (JSDK-01, JSDK-02). It takes the QueryDocument
+// options plus WithIdempotencyKey; without that option it sends a fresh
+// random key (rand.Text). A caller key must be 1-255 bytes of printable
+// ASCII (0x20-0x7E), else ErrInvalidIdempotencyKey before any I/O. The key is
+// scoped to the account (org), not to the API key, and DocQL keeps it for
+// 24 hours (OD-14).
+//
+// A submit 503 may already have created the job, so SubmitDocument retries
+// it with the same key: any 503, and a 409 idempotency_in_progress, is sent
+// again, at most 4 attempts in all, after the answer's Retry-After clamped to
+// [1, 30] s, else 1, 2, 4 s. DocQL answers a same-key retry with the job the
+// first attempt created, never a second one. Only a replayable file is
+// retried: FileBytes, FilePath (reopened) and a FileReader over a working
+// io.Seeker (rewound to the offset it had when SubmitDocument was called). A
+// plain io.Reader, a *bytes.Buffer or a pipe is sent once, and its first 503
+// or 409 is returned. A 429, any other status, a transport error and a
+// timeout are returned at once. When ctx ends during a retry sleep,
+// SubmitDocument returns a *ConnectionError wrapping ctx.Err() at once.
+//
 // Job.IdempotencyKey, Error.IdempotencyKey and ConnectionError.IdempotencyKey
 // carry the key sent, so a failed submit can be retried safely with
 // WithIdempotencyKey(key): DocQL answers the same job instead of creating a
-// second one. The per-call deadline is the client's WithTimeout value, as for
-// QueryDocument. Every client-side check happens before a byte is sent.
+// second one. A job that ended failed (job_interrupted included) is not
+// resubmitted by its old key, which answers the same failed job: submit it
+// again with a new key. Each attempt's deadline is the client's WithTimeout
+// value, as for QueryDocument. Every client-side check happens before a byte
+// is sent. net/http may also re-send the POST once on its own when a reused
+// connection fails before any answer; that hidden attempt carries the same
+// key and is not counted.
 func (c *Client) SubmitDocument(ctx context.Context, file File, instr Instruction, opts ...QueryOption) (*Job, error) {
 	if c == nil || c.cfg == nil {
 		return nil, ErrNilClient
@@ -223,24 +225,7 @@ func (c *Client) SubmitDocument(ctx context.Context, file File, instr Instructio
 	// A file the SDK opened from a path is closed on every path (D-07).
 	defer up.closer.close()
 
-	status, h, body, err := c.sendOnce(ctx, http.MethodPost, jobsPath, up, []string{key}, c.cfg.timeout)
-	if err != nil {
-		return nil, err
-	}
-	if status >= 200 && status < 300 {
-		job, perr := parseJob(status, h, body, c.cfg.apiKey, key)
-		if perr != nil {
-			var e *Error
-			if errors.As(perr, &e) {
-				e.IdempotencyKey = key
-			}
-			return nil, perr
-		}
-		return job, nil
-	}
-	e := decodeError(status, h, body, c.cfg.apiKey)
-	e.IdempotencyKey = key
-	return nil, e
+	return c.submitWithRetry(ctx, up, key)
 }
 
 // jobCall checks the arguments every job-id method shares and returns the

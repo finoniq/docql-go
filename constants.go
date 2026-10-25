@@ -120,3 +120,18 @@ const (
 	// failure without Retry-After (D-04).
 	transientBackoffCap = 30 * time.Second
 )
+
+// The submit's same-key retry (JSDK-02, D-07): the numbers docql-python's
+// SUBMIT_MAX_ATTEMPTS and SUBMIT_BACKOFF carry, so every SDK sends the same
+// requests on the same answers. Each sleep is the answer's Retry-After
+// clamped to [retryAfterFloor, retryAfterCap], else submitBackoff.
+const (
+	// submitMaxAttempts caps the SDK-level attempts of one SubmitDocument
+	// call, the first one included (net/http's own hidden replay of a POST
+	// with an Idempotency-Key is not counted; 26-RESEARCH Pitfall 7).
+	submitMaxAttempts = 4
+)
+
+// submitBackoff is the sleep before attempt n+2 when answer n+1 carries no
+// usable Retry-After.
+var submitBackoff = [submitMaxAttempts - 1]time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
