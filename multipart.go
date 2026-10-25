@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // newBoundary returns a fresh random multipart boundary: 16 bytes from
@@ -136,16 +137,18 @@ type upload struct {
 }
 
 // ownCloser closes a file the SDK opened from a path — never a caller's
-// reader or file (D-07). close is safe to call more than once.
+// reader or file (D-07). close is safe to call more than once and from two
+// goroutines at once (12-REVIEW R1-WR-02): net/http closes the request body
+// from its write loop while QueryDocument's deferred close runs on the
+// caller goroutine.
 type ownCloser struct {
 	f    *os.File
-	done bool
+	once sync.Once
 }
 
 func (o *ownCloser) close() {
-	if o != nil && o.f != nil && !o.done {
-		o.done = true
-		_ = o.f.Close()
+	if o != nil && o.f != nil {
+		o.once.Do(func() { _ = o.f.Close() })
 	}
 }
 

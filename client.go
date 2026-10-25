@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Client is a client for the DocQL document-extraction API (D-01). A *Client
@@ -70,26 +71,37 @@ func refuseRedirect(*http.Request, []*http.Request) error {
 
 // NewClient builds a client (D-01). Every value is an option; each falls back
 // to its environment variable (a whitespace-only value counts as unset), and
-// the URL additionally to the production default. It returns an error, and no
-// client, when no usable key can be resolved, the URL is not an http:// or
-// https:// URL, or the timeout is not positive.
+// the URL additionally to the production default. The key is trimmed of
+// surrounding whitespace. It returns an error, and no client, when no usable
+// key can be resolved, the key contains a control character, the URL is not
+// an http:// or https:// URL, or the timeout is not positive.
 func NewClient(opts ...Option) (*Client, error) {
 	cfg := &config{timeout: defaultTimeout}
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	var key string
+	// The key is trimmed from both sources (12-REVIEW R1-WR-01): a trailing
+	// newline from a mounted secret would otherwise fail in net/http header
+	// validation as a misleading connection error, and an untrimmed key would
+	// defeat the scrub. A key that still holds a control character is
+	// rejected before any I/O, without echoing it.
+	var key, source string
 	if cfg.apiKeySet {
-		if strings.TrimSpace(cfg.apiKey) == "" {
+		key = strings.TrimSpace(cfg.apiKey)
+		if key == "" {
 			return nil, fmt.Errorf("%w: the explicitly given WithAPIKey value is empty", ErrMissingAPIKey)
 		}
-		key = cfg.apiKey
+		source = "the WithAPIKey value"
 	} else {
-		key = os.Getenv(envAPIKey)
-		if strings.TrimSpace(key) == "" {
+		key = strings.TrimSpace(os.Getenv(envAPIKey))
+		if key == "" {
 			return nil, fmt.Errorf("%w: WithAPIKey was not given and %s is unset", ErrMissingAPIKey, envAPIKey)
 		}
+		source = envAPIKey
+	}
+	if strings.IndexFunc(key, unicode.IsControl) >= 0 {
+		return nil, fmt.Errorf("%w (in %s)", ErrInvalidAPIKey, source)
 	}
 
 	var urlStr string
@@ -199,6 +211,10 @@ func (c *Client) connectionError(ctx context.Context, cause error, up *upload) *
 // WithMode and WithFilename tune the single call. Nothing here retries: calls
 // are paid. Every client-side check happens before a byte is sent.
 func (c *Client) QueryDocument(ctx context.Context, file File, instr Instruction, opts ...QueryOption) (*QueryResult, error) {
+	// A nil or zero Client fails before any file is opened (12-REVIEW WR-03).
+	if c == nil || c.cfg == nil {
+		return nil, ErrNilClient
+	}
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
