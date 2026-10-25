@@ -409,6 +409,10 @@ func TestDecodeRetryAfter429And503(t *testing.T) {
 // as for job-404-jobs-off and job-405) and request id as the kit expects, and
 // Retryable only for 429 and 503.
 func TestDecodeJobErrorCases(t *testing.T) {
+	// A key of the real dql_ shape: Reason and RequestID are scrubbed of the
+	// key (12-REVIEW WR-01), and a toy key such as "k" is a substring of
+	// idempotency_key_conflict.
+	const key = "dql_SECRETSECRETSECRETSECRETSECRET_abcdef"
 	ran := 0
 	for _, c := range loadJobCases(t).DecodeCases {
 		if c.Status < 400 {
@@ -416,7 +420,7 @@ func TestDecodeJobErrorCases(t *testing.T) {
 		}
 		ran++
 		t.Run(c.ID, func(t *testing.T) {
-			err := decodeError(c.Status, caseHeader(c), []byte(c.BodyUTF8), "k")
+			err := decodeError(c.Status, caseHeader(c), []byte(c.BodyUTF8), key)
 			if err.Status != c.Expect.Status {
 				t.Errorf("Status = %d, want %d", err.Status, c.Expect.Status)
 			}
@@ -441,5 +445,29 @@ func TestDecodeJobErrorCases(t *testing.T) {
 	}
 	if ran == 0 {
 		t.Fatal("job-cases.json has no error decode case")
+	}
+}
+
+// TestDecodeParseResultTrailingGarbage pins 12-REVIEW WR-02: a 2xx envelope
+// followed by a stray closing brace or bracket is unusable, as strict as
+// decodeError's json.Unmarshal.
+func TestDecodeParseResultTrailingGarbage(t *testing.T) {
+	for _, body := range []string{`{"data":{}}}`, `{"data":{}}]`, `{"data":{}} junk`, `{"data":{}}{"x":1}`} {
+		res, err := parseResult(200, nil, []byte(body), "k")
+		if res != nil {
+			t.Fatalf("body %q: result is not nil", body)
+		}
+		var de *Error
+		if !errors.As(err, &de) {
+			t.Fatalf("body %q: error is not *Error: %v", body, err)
+		}
+		if de.Message != "unexpected non-JSON response" {
+			t.Errorf("body %q: Message = %q", body, de.Message)
+		}
+	}
+	for _, body := range []string{`{"data":{}}`, "{\"data\":{}}\n", " {\"data\":{}} \r\n\t"} {
+		if _, err := parseResult(200, nil, []byte(body), "k"); err != nil {
+			t.Errorf("body %q: %v, want a result", body, err)
+		}
 	}
 }

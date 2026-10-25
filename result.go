@@ -3,6 +3,7 @@ package docql
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,7 +17,8 @@ type QueryResult struct {
 	// {}.
 	Data json.RawMessage
 	// RequestID comes from metadata, else the X-Request-Id header; "" when
-	// neither is present.
+	// neither is present. It never contains the API key or a control
+	// character.
 	RequestID string
 	// PageCount is nil when the engine omits it or it is not a JSON integer
 	// (D-11): absent and 0 stay distinct, which billing in pages needs.
@@ -30,20 +32,27 @@ type QueryResult struct {
 // parseResult decodes a 2xx body into *QueryResult (D-11). A body that is not
 // a JSON object, or whose data is present, non-null and not an object, is
 // unusable: it returns *Error naming the problem instead of an empty result.
-// The key scrubs the Body stored on that error, symmetric with decodeError.
+// The key scrubs the Body stored on that error, symmetric with decodeError,
+// and every request id is sanitized the same way (12-REVIEW WR-01).
 func parseResult(status int, h http.Header, body []byte, key string) (*QueryResult, error) {
 	unusable := func(message string) (*QueryResult, error) {
 		return nil, &Error{
 			Status:    status,
-			RequestID: h.Get("X-Request-Id"),
+			RequestID: sanitizeServerString(h.Get("X-Request-Id"), key, 0),
 			Message:   message,
 			Body:      scrubAndTruncate(body, key),
 		}
 	}
 
+	// Exactly one JSON object, then EOF (12-REVIEW WR-02): dec.More() is
+	// false before a stray } or ], so the second Decode must report io.EOF.
 	var top map[string]json.RawMessage
 	dec := json.NewDecoder(bytes.NewReader(body))
-	if err := dec.Decode(&top); err != nil || top == nil || dec.More() {
+	if err := dec.Decode(&top); err != nil || top == nil {
+		return unusable("unexpected non-JSON response")
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
 		return unusable("unexpected non-JSON response")
 	}
 
@@ -82,6 +91,7 @@ func parseResult(status int, h http.Header, body []byte, key string) (*QueryResu
 	} else {
 		requestID = h.Get("X-Request-Id")
 	}
+	requestID = sanitizeServerString(requestID, key, 0)
 
 	return &QueryResult{
 		Data:      data,

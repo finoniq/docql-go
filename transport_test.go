@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // roundTripFunc adapts a function into an http.RoundTripper.
@@ -366,4 +367,126 @@ func TestTransportKeyRedaction(t *testing.T) {
 	if s := refusedClient.GoString(); strings.Contains(s, key) {
 		t.Errorf("GoString() contains the key: %q", s)
 	}
+}
+
+// TestDecodeScrubsServerStrings pins 12-REVIEW WR-01: a server that echoes the
+// API key inside metadata.reason, metadata.request_id or the X-Request-Id
+// header, or embeds CR/LF to forge a log line, never gets either into Reason,
+// RequestID, Message, Error() or QueryResult.RequestID; Message is capped at
+// 2048 runes.
+func TestDecodeScrubsServerStrings(t *testing.T) {
+	key := "dql_SECRETSECRETSECRETSECRETSECRET_abcdef"
+
+	call := func(t *testing.T, handler http.HandlerFunc) (*QueryResult, error) {
+		t.Helper()
+		srv := httptest.NewServer(handler)
+		defer srv.Close()
+		client, cerr := NewClient(WithAPIKey(key), WithAPIURL(srv.URL))
+		if cerr != nil {
+			t.Fatalf("NewClient: %v", cerr)
+		}
+		return probeCall(context.Background(), client)
+	}
+	clean := func(t *testing.T, name, text string) {
+		t.Helper()
+		if strings.Contains(text, key) {
+			t.Errorf("%s contains the key: %q", name, text)
+		}
+		if strings.ContainsAny(text, "\r\n") {
+			t.Errorf("%s contains CR or LF: %q", name, text)
+		}
+	}
+	errorSurfaces := func(t *testing.T, err error) *Error {
+		t.Helper()
+		var de *Error
+		if !errors.As(err, &de) {
+			t.Fatalf("error is not *Error: %v", err)
+		}
+		for name, text := range map[string]string{
+			"Reason": de.Reason, "RequestID": de.RequestID, "Message": de.Message, "Error()": de.Error(),
+		} {
+			clean(t, name, text)
+		}
+		return de
+	}
+
+	t.Run("envelope-echo", func(t *testing.T) {
+		_, err := call(t, func(w http.ResponseWriter, r *http.Request) {
+			echoed := r.Header.Get("X-API-Key")
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("X-Request-Id", "hdr-"+echoed)
+			jsonEnvelope(w, http.StatusUnauthorized, "bad "+echoed+"\r\nX-Injected: 1",
+				"key "+echoed+"\r\nX-Injected: 1\n"+strings.Repeat("ก", 3000), "rid-"+echoed+"\r\n")
+		})
+		de := errorSurfaces(t, err)
+		if !strings.Contains(de.Reason, "***") || !strings.Contains(de.RequestID, "***") {
+			t.Errorf("scrub marker missing: Reason=%q RequestID=%q", de.Reason, de.RequestID)
+		}
+		if strings.Contains(de.RequestID, "hdr-") {
+			t.Errorf("RequestID = %q, want the envelope request_id over the header", de.RequestID)
+		}
+		if n := utf8.RuneCountInString(de.Message); n > 2048 {
+			t.Errorf("Message is %d runes, want at most 2048", n)
+		}
+	})
+
+	t.Run("header-fallback-echo", func(t *testing.T) {
+		_, err := call(t, func(w http.ResponseWriter, r *http.Request) {
+			echoed := r.Header.Get("X-API-Key")
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("X-Request-Id", "hdr-\t"+echoed)
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"error_info":"no","metadata":{"reason":"forbidden"}}`)
+		})
+		de := errorSurfaces(t, err)
+		if de.RequestID != "hdr- ***" {
+			t.Errorf("RequestID = %q, want %q", de.RequestID, "hdr- ***")
+		}
+	})
+
+	t.Run("non-envelope-header-echo", func(t *testing.T) {
+		_, err := call(t, func(w http.ResponseWriter, r *http.Request) {
+			echoed := r.Header.Get("X-API-Key")
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("X-Request-Id", echoed)
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprint(w, "<html>bad gateway</html>")
+		})
+		errorSurfaces(t, err)
+	})
+
+	t.Run("success-request-id", func(t *testing.T) {
+		for name, handler := range map[string]http.HandlerFunc{
+			"metadata": func(w http.ResponseWriter, r *http.Request) {
+				echoed := r.Header.Get("X-API-Key")
+				_, _ = io.Copy(io.Discard, r.Body)
+				fmt.Fprintf(w, `{"data":{},"metadata":{"request_id":"r-%s\r\nX-Injected: 1"}}`, echoed)
+			},
+			"header": func(w http.ResponseWriter, r *http.Request) {
+				echoed := r.Header.Get("X-API-Key")
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.Header().Set("X-Request-Id", "r-"+echoed)
+				fmt.Fprint(w, `{"data":{}}`)
+			},
+		} {
+			res, err := call(t, handler)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			clean(t, name+" QueryResult.RequestID", res.RequestID)
+			if !strings.HasPrefix(res.RequestID, "r-***") {
+				t.Errorf("%s: RequestID = %q, want the r-*** prefix", name, res.RequestID)
+			}
+		}
+	})
+
+	t.Run("unusable-2xx-header-echo", func(t *testing.T) {
+		_, err := call(t, func(w http.ResponseWriter, r *http.Request) {
+			echoed := r.Header.Get("X-API-Key")
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("X-Request-Id", echoed)
+			fmt.Fprint(w, "<html>")
+		})
+		errorSurfaces(t, err)
+	})
 }

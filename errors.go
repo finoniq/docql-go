@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -48,10 +49,12 @@ type Error struct {
 	// Status is the HTTP status code.
 	Status int
 	// Reason is the envelope reason; "" for non-DocQL bodies (a Fastify 404
-	// or 405, an HTML 524, an empty 5xx).
+	// or 405, an HTML 524, an empty 5xx). It never contains the API key or a
+	// control character.
 	Reason string
 	// RequestID comes from the envelope metadata, else the X-Request-Id
-	// response header; "" when neither is present.
+	// response header; "" when neither is present. It never contains the API
+	// key or a control character.
 	RequestID string
 	// RetryAfter is the parsed Retry-After header in whole seconds; 0 when
 	// absent (D-09).
@@ -59,7 +62,8 @@ type Error struct {
 	// Retryable is true only for 429 and 503.
 	Retryable bool
 	// Message is error_info from the envelope; "" when absent. It never
-	// contains the API key.
+	// contains the API key or a control character, and is cut to 2048
+	// characters.
 	Message string
 	// Body is the response body, made valid UTF-8, scrubbed of the API key
 	// and truncated to 2048 characters.
@@ -152,6 +156,30 @@ func scrubAndTruncate(b []byte, key string) string {
 	return string(runes)
 }
 
+// sanitizeServerString makes a server-controlled string safe to store on an
+// error or result and to print in Error() (12-REVIEW WR-01): invalid UTF-8
+// becomes U+FFFD, every control character (CR and LF included) becomes a
+// space so a hostile server cannot forge log lines, every occurrence of the
+// key is then replaced with ***, and the text is cut to maxRunes runes when
+// maxRunes > 0. The scrub runs after the control-character pass, so a key
+// split by a control character cannot reassemble, and before the cut, so a
+// key straddling the cut cannot survive as a fragment.
+func sanitizeServerString(s, key string, maxRunes int) string {
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(s, string(utf8.RuneError)))
+	text = scrub(text, key)
+	if maxRunes > 0 {
+		if runes := []rune(text); len(runes) > maxRunes {
+			text = string(runes[:maxRunes])
+		}
+	}
+	return text
+}
+
 // now is the injectable clock for Retry-After parsing; tests stub it.
 var now = time.Now
 
@@ -195,8 +223,9 @@ func isASCIIDigits(s string) bool {
 
 // decodeError decodes a non-2xx response into *Error (D-09). An envelope is
 // present only when the body is a JSON object whose metadata is an object
-// with a string reason. Neither the stored Body nor Message ever contains the
-// API key, even when the server echoes it back.
+// with a string reason. No stored string (Body, Message, Reason, RequestID)
+// ever contains the API key, even when the server echoes it back, and Reason,
+// RequestID and Message carry no control characters (12-REVIEW WR-01).
 func decodeError(status int, h http.Header, body []byte, key string) *Error {
 	e := &Error{
 		Status:    status,
@@ -208,20 +237,20 @@ func decodeError(status int, h http.Header, body []byte, key string) *Error {
 		if json.Unmarshal(doc["metadata"], &md) == nil && md != nil {
 			var reason *string
 			if json.Unmarshal(md["reason"], &reason) == nil && reason != nil {
-				e.Reason = *reason
+				e.Reason = sanitizeServerString(*reason, key, 0)
 				var info *string
 				if json.Unmarshal(doc["error_info"], &info) == nil && info != nil {
-					e.Message = scrub(*info, key)
+					e.Message = sanitizeServerString(*info, key, errorBodyKeepChars)
 				}
 				var rid *string
 				if json.Unmarshal(md["request_id"], &rid) == nil && rid != nil {
-					e.RequestID = *rid
+					e.RequestID = sanitizeServerString(*rid, key, 0)
 				}
 			}
 		}
 	}
 	if e.RequestID == "" {
-		e.RequestID = h.Get("X-Request-Id")
+		e.RequestID = sanitizeServerString(h.Get("X-Request-Id"), key, 0)
 	}
 	e.RetryAfter = parseRetryAfter(h.Get("Retry-After"), now())
 	e.Body = scrubAndTruncate(body, key)
