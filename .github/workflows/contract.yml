@@ -3,6 +3,7 @@
 # equals the vendored copy in contract/ (D-07). Since Phase 12 the workflow also runs
 # the full shared SDK case list against the same pinned stub, gated on the vendored
 # PASS count and refusing any FAIL or SKIP, plus the README quickstart (contract-cases),
+# and since v0.2 every stub-target kit v3 job case, gated on the jq count (JSDK-04),
 # and it is reusable so release.yml runs it on a tag.
 name: contract
 
@@ -67,10 +68,19 @@ jobs:
             echo "expected $WANT TestContract(SDK|Raw)Cases PASS lines, saw $pass_count" >&2
             exit 1
           fi
+          # JSDK-04: every stub-target kit v3 job case with via submit, poll, cancel or
+          # wait must pass as its own TestContractJobCases subtest; a silently missing
+          # case fails the run.
+          WANT_JOBS=$(jq '[.cases[] | select(.target == "stub" and (.via == "submit" or .via == "poll" or .via == "cancel" or .via == "wait"))] | length' contract/job-cases.json)
+          n=$(grep -cE '^    --- PASS: TestContractJobCases/' "$RUNNER_TEMP/contract.log" || true)
+          if [ "$WANT_JOBS" -eq 0 ] || [ "$n" -ne "$WANT_JOBS" ]; then
+            echo "expected $WANT_JOBS TestContractJobCases PASS lines, saw $n" >&2
+            exit 1
+          fi
           if grep -Eq -- '--- (FAIL|SKIP)' "$RUNNER_TEMP/contract.log"; then
             echo "the contract run has FAIL or SKIP lines" >&2
             exit 1
           fi
-          echo "contract-cases: $pass_count/$WANT case subtests PASS, no FAIL/SKIP"
+          echo "contract-cases: $pass_count/$WANT case subtests and $n/$WANT_JOBS job case subtests PASS, no FAIL/SKIP"
       - name: README quickstart
         run: scripts/stub-up.sh --run scripts/run-readme.sh
