@@ -135,7 +135,7 @@ func TestSurfaceExported(t *testing.T) {
 	wantMethods := []string{
 		"Client.QueryDocument", "Client.String", "Client.GoString",
 		"Error.Error", "ConnectionError.Error", "ConnectionError.Unwrap", "ConnectionError.Timeout",
-		"Client.SubmitDocument", "Client.GetJob", "Client.Wait",
+		"Client.SubmitDocument", "Client.GetJob", "Client.Wait", "Client.CancelJob",
 		"WaitError.Error", "WaitError.Unwrap", "WaitError.Timeout",
 	}
 	wantFields := map[string][]string{

@@ -421,3 +421,8 @@ func retryAfterHint(h http.Header) (time.Duration, bool) {
 	}
 	return 0, false
 }
+
+// CancelJob is declared without behaviour until its implementation lands.
+func (c *Client) CancelJob(ctx context.Context, jobID string) (*Job, error) {
+	return nil, errors.New("docql: CancelJob is not implemented")
+}

@@ -471,3 +471,144 @@ func TestDecodeParseResultTrailingGarbage(t *testing.T) {
 		}
 	}
 }
+
+// jobDecodeCase mirrors one job-cases.json decode case with its job
+// expectations.
+type jobDecodeCase struct {
+	ID       string            `json:"id"`
+	Status   int               `json:"status"`
+	Headers  map[string]string `json:"headers"`
+	BodyUTF8 string            `json:"bodyUtf8"`
+	Expect   struct {
+		Status    int     `json:"status"`
+		RequestID *string `json:"requestId"`
+		JobID     string  `json:"jobId"`
+		JobStatus string  `json:"jobStatus"`
+	} `json:"expect"`
+}
+
+// TestDecodeJobSuccessCases runs every job-cases.json decode case with a 2xx
+// status through parseJob: job id, status and request id as the kit expects;
+// a Result on a succeeded job and a not-retryable Error carrying the job id
+// on a failed one; page counts and timestamps as the body states them.
+func TestDecodeJobSuccessCases(t *testing.T) {
+	const key = "dql_SECRETSECRETSECRETSECRETSECRET_abcdef"
+	raw, err := os.ReadFile(filepath.Join("contract", "job-cases.json"))
+	if err != nil {
+		t.Fatalf("read contract/job-cases.json: %v", err)
+	}
+	var kit struct {
+		DecodeCases []jobDecodeCase `json:"decodeCases"`
+	}
+	if err := json.Unmarshal(raw, &kit); err != nil {
+		t.Fatalf("decode contract/job-cases.json: %v", err)
+	}
+	ran := 0
+	for _, c := range kit.DecodeCases {
+		if c.Status >= 300 {
+			continue
+		}
+		ran++
+		t.Run(c.ID, func(t *testing.T) {
+			h := http.Header{}
+			for k, v := range c.Headers {
+				h.Set(k, v)
+			}
+			job, err := parseJob(c.Status, h, []byte(c.BodyUTF8), key, "")
+			if err != nil {
+				t.Fatalf("parseJob: %v", err)
+			}
+			if job.JobID != c.Expect.JobID {
+				t.Errorf("JobID = %q, want %q", job.JobID, c.Expect.JobID)
+			}
+			if string(job.Status) != c.Expect.JobStatus {
+				t.Errorf("Status = %q, want %q", job.Status, c.Expect.JobStatus)
+			}
+			wantID := ""
+			if c.Expect.RequestID != nil {
+				wantID = *c.Expect.RequestID
+			}
+			if job.RequestID != wantID {
+				t.Errorf("RequestID = %q, want %q", job.RequestID, wantID)
+			}
+			if job.IdempotencyKey != "" {
+				t.Errorf("IdempotencyKey = %q, want empty for a decoded answer", job.IdempotencyKey)
+			}
+
+			var body struct {
+				Metadata struct {
+					PageCount *int `json:"page_count"`
+					PagesDone *int `json:"pages_done"`
+				} `json:"metadata"`
+				CreatedAt  *string `json:"created_at"`
+				StartedAt  *string `json:"started_at"`
+				FinishedAt *string `json:"finished_at"`
+				ExpiresAt  *string `json:"expires_at"`
+			}
+			if err := json.Unmarshal([]byte(c.BodyUTF8), &body); err != nil {
+				t.Fatalf("read the case body: %v", err)
+			}
+			intEq := func(name string, got, want *int) {
+				t.Helper()
+				if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+					t.Errorf("%s = %v, want %v", name, got, want)
+				}
+			}
+			intEq("PageCount", job.PageCount, body.Metadata.PageCount)
+			intEq("PagesDone", job.PagesDone, body.Metadata.PagesDone)
+			timeEq := func(name string, got *time.Time, want *string) {
+				t.Helper()
+				if want == nil {
+					if got != nil {
+						t.Errorf("%s = %v, want nil", name, got)
+					}
+					return
+				}
+				w, perr := time.Parse(time.RFC3339, *want)
+				if perr != nil {
+					t.Fatalf("%s in the case body: %v", name, perr)
+				}
+				if got == nil || !got.Equal(w) {
+					t.Errorf("%s = %v, want %v", name, got, w)
+				}
+			}
+			timeEq("CreatedAt", job.CreatedAt, body.CreatedAt)
+			timeEq("StartedAt", job.StartedAt, body.StartedAt)
+			timeEq("FinishedAt", job.FinishedAt, body.FinishedAt)
+			timeEq("ExpiresAt", job.ExpiresAt, body.ExpiresAt)
+
+			switch job.Status {
+			case JobStatusSucceeded:
+				if job.Result == nil || job.Result.PageCount == nil {
+					t.Fatalf("a succeeded job without a typed Result: %+v", job.Result)
+				}
+				if job.Error != nil {
+					t.Errorf("a succeeded job with an Error: %v", job.Error)
+				}
+			case JobStatusFailed:
+				if job.Error == nil {
+					t.Fatal("a failed job without an Error")
+				}
+				if job.Error.Retryable {
+					t.Error("a failed job's Error is retryable")
+				}
+				if job.Error.JobID != job.JobID {
+					t.Errorf("Error.JobID = %q, want %q", job.Error.JobID, job.JobID)
+				}
+				if job.Error.Reason == "" || job.Error.Status < 400 {
+					t.Errorf("Error = %d %q, want the embedded status and reason", job.Error.Status, job.Error.Reason)
+				}
+				if job.Result != nil {
+					t.Error("a failed job with a Result")
+				}
+			default:
+				if job.Result != nil || job.Error != nil {
+					t.Errorf("a %s job with a Result or an Error", job.Status)
+				}
+			}
+		})
+	}
+	if ran < 11 {
+		t.Fatalf("ran %d 2xx job decode cases, want at least 11", ran)
+	}
+}
