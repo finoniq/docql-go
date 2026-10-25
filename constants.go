@@ -95,3 +95,28 @@ const (
 	// error, for a job interrupted before it could complete.
 	ReasonJobInterrupted = "job_interrupted"
 )
+
+// The job routes and the wait pacing (JSDK-01). The wait numbers copy the
+// contract kit's reference waitForJob (D-03 as matched to the kit, D-04,
+// OD-5), so every SDK sleeps the same seconds on the same answers.
+const (
+	// jobsPath is the submit route; one job lives at jobsPath + "/" + id.
+	jobsPath = "/v1/jobs"
+	// pollTimeout bounds each GET of the wait, GetJob and CancelJob, never
+	// the 660 s upload deadline (26-RESEARCH Pitfall 3). Each poll's deadline
+	// is also capped by the wait's own deadline.
+	pollTimeout = 30 * time.Second
+	// defaultWaitTimeout is the wait's deadline when the caller's context
+	// has none (OD-5).
+	defaultWaitTimeout = 15 * time.Minute
+	// retryAfterFloor and retryAfterCap clamp every Retry-After the wait
+	// honours (D-03).
+	retryAfterFloor = 1 * time.Second
+	retryAfterCap   = 30 * time.Second
+	// retryAfterAbsent is the sleep after a non-terminal 200 without
+	// Retry-After: the kit's value (26-RESEARCH F6).
+	retryAfterAbsent = 1 * time.Second
+	// transientBackoffCap caps the 1, 2, 4, 8, 16 s backoff of a transient
+	// failure without Retry-After (D-04).
+	transientBackoffCap = 30 * time.Second
+)

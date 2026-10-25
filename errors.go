@@ -1,6 +1,7 @@
 package docql
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +43,17 @@ var (
 	// empty: there is no default filename (D-06).
 	ErrMissingFilename = errors.New("docql: missing filename: this file input needs WithFilename to name the file part")
 
+	// ErrInvalidIdempotencyKey is returned by SubmitDocument when the
+	// WithIdempotencyKey value is not 1-255 printable ASCII characters. The
+	// key is never part of the error text.
+	ErrInvalidIdempotencyKey = errors.New("docql: idempotency key must be 1-255 printable ASCII characters (0x20-0x7E)")
+	// ErrNoJobID is returned by GetJob, Wait and CancelJob for an empty job
+	// id, before any request is sent.
+	ErrNoJobID = errors.New("docql: no job id")
+	// ErrIdempotencyKeyOnQuery is returned by QueryDocument when it is given
+	// WithIdempotencyKey: the key belongs to SubmitDocument.
+	ErrIdempotencyKeyOnQuery = errors.New("docql: WithIdempotencyKey applies to SubmitDocument, not QueryDocument")
+
 	// errShortRead marks a measured file that delivered fewer bytes than its
 	// measured length. Callers never match it directly: QueryDocument maps
 	// any chain carrying it to a *ConnectionError naming the size change
@@ -75,6 +87,13 @@ type Error struct {
 	// Body is the response body, made valid UTF-8, scrubbed of the API key
 	// and truncated to 2048 characters.
 	Body string
+	// JobID is the job the error belongs to: set on every error of GetJob,
+	// Wait and CancelJob, and on a failed job's error (D-08); "" otherwise.
+	JobID string
+	// IdempotencyKey is the Idempotency-Key the failed SubmitDocument call
+	// sent, so the caller can retry safely with the same key (D-08); "" for
+	// every other call. It is never part of Error().
+	IdempotencyKey string
 }
 
 // Error renders one of two string forms (D-09): the envelope form
@@ -94,16 +113,33 @@ func (e *Error) Error() string {
 		if e.RetryAfter > 0 {
 			extras = append(extras, fmt.Sprintf("retry_after=%ds", int64(e.RetryAfter/time.Second)))
 		}
+		if e.JobID != "" {
+			extras = append(extras, "job_id="+printableJobID(e.JobID))
+		}
 		if len(extras) > 0 {
 			text += " (" + strings.Join(extras, ", ") + ")"
 		}
 		return text
 	}
 	text := fmt.Sprintf("%d (non-DocQL response): %s", e.Status, snippet(e.Body))
+	var tail []string
 	if e.RequestID != "" {
-		text += fmt.Sprintf(" (request_id=%s)", e.RequestID)
+		tail = append(tail, "request_id="+e.RequestID)
+	}
+	if e.JobID != "" {
+		tail = append(tail, "job_id="+printableJobID(e.JobID))
+	}
+	if len(tail) > 0 {
+		text += " (" + strings.Join(tail, ", ") + ")"
 	}
 	return text
+}
+
+// printableJobID renders a job id inside an error string: the id is opaque
+// and may come from the caller or the server, so control characters become
+// spaces and a hostile id cannot forge log lines.
+func printableJobID(id string) string {
+	return sanitizeServerString(id, "", 0)
 }
 
 // snippet collapses whitespace runs, trims, and cuts the body snippet to
@@ -124,6 +160,12 @@ func snippet(body string) string {
 // reset, an early close, a short read or a timeout — any failure before a
 // usable HTTP response arrived. Match it with errors.As.
 type ConnectionError struct {
+	// IdempotencyKey is the Idempotency-Key the SubmitDocument request
+	// carried when the connection failed, so the caller can retry safely
+	// with the same key (D-08); "" for every other call. It is never part of
+	// Error().
+	IdempotencyKey string
+
 	msg     string
 	cause   error
 	timeout bool
@@ -263,3 +305,30 @@ func decodeError(status int, h http.Header, body []byte, key string) *Error {
 	e.Body = scrubAndTruncate(body, key)
 	return e
 }
+
+// WaitError is returned by Wait when the wait stopped before the job reached
+// a terminal status: the caller's context was cancelled, or the wait deadline
+// (the context's, else 15 minutes) passed (D-06). The job itself was not
+// cancelled and may still be running; poll it with GetJob, wait again, or
+// cancel it with CancelJob. Unwrap returns the context error, so
+// errors.Is(err, ctx.Err()), errors.Is(err, context.DeadlineExceeded) and
+// errors.Is(err, context.Canceled) work.
+type WaitError struct {
+	// JobID is the job the wait was for.
+	JobID string
+
+	err error
+}
+
+// Error names the job and the context error, and says the job was not
+// cancelled.
+func (e *WaitError) Error() string {
+	return fmt.Sprintf("docql: wait for job %s stopped: %v; the job was not cancelled", printableJobID(e.JobID), e.err)
+}
+
+// Unwrap returns the context error that stopped the wait.
+func (e *WaitError) Unwrap() error { return e.err }
+
+// Timeout reports whether the wait stopped because its deadline passed,
+// rather than because the caller cancelled it.
+func (e *WaitError) Timeout() bool { return errors.Is(e.err, context.DeadlineExceeded) }

@@ -102,6 +102,8 @@ func TestConstantsReasons(t *testing.T) {
 // review (12-07): parsing the package's non-test .go files gives exactly the
 // agreed constants, variables, types, functions, methods and struct fields.
 func TestSurfaceExported(t *testing.T) {
+	got := parseSurface(t)
+
 	wantConstants := []string{
 		"Version", "ModeFast", "ModeStandard",
 		"ReasonInvalidAPIKey", "ReasonUploadTooLarge", "ReasonUnsupportedMediaType",
@@ -112,30 +114,49 @@ func TestSurfaceExported(t *testing.T) {
 		"ReasonConcurrencyLimitExceeded", "ReasonRateLimitExceeded",
 		"ReasonJobNotFound", "ReasonJobExpired", "ReasonQueueFull",
 		"ReasonIdempotencyKeyConflict", "ReasonIdempotencyInProgress", "ReasonJobInterrupted",
+		"JobStatusQueued", "JobStatusRunning", "JobStatusSucceeded", "JobStatusFailed", "JobStatusCancelled",
 	}
 	wantVariables := []string{
 		"ErrMissingAPIKey", "ErrInvalidAPIURL", "ErrInvalidTimeout", "ErrNilContext",
 		"ErrNoInstruction", "ErrNoFile", "ErrMissingFilename",
 		"ErrInvalidAPIKey", "ErrNilClient",
+		"ErrInvalidIdempotencyKey", "ErrNoJobID", "ErrIdempotencyKeyOnQuery",
 	}
 	wantTypes := []string{
 		"Client", "Option", "QueryOption", "Mode", "Instruction", "File",
 		"QueryResult", "Error", "ConnectionError",
+		"Job", "JobStatus", "WaitError", "WaitOption",
 	}
 	wantFunctions := []string{
 		"NewClient", "WithAPIKey", "WithAPIURL", "WithTimeout", "WithHTTPClient",
 		"WithMode", "WithFilename", "Query", "Prompt", "FilePath", "FileBytes", "FileReader",
+		"WithIdempotencyKey", "WithPollInterval",
 	}
 	wantMethods := []string{
 		"Client.QueryDocument", "Client.String", "Client.GoString",
 		"Error.Error", "ConnectionError.Error", "ConnectionError.Unwrap", "ConnectionError.Timeout",
+		"Client.SubmitDocument", "Client.GetJob", "Client.Wait",
+		"WaitError.Error", "WaitError.Unwrap", "WaitError.Timeout",
 	}
 	wantFields := map[string][]string{
 		"QueryResult": {"Data", "RequestID", "PageCount", "PagesOCR", "Metadata"},
-		"Error":       {"Status", "Reason", "RequestID", "RetryAfter", "Retryable", "Message", "Body"},
+		"Error": {"Status", "Reason", "RequestID", "RetryAfter", "Retryable", "Message", "Body",
+			"JobID", "IdempotencyKey"},
+		"ConnectionError": {"IdempotencyKey"},
+		"Client":          {},
+		"Instruction":     {},
+		"File":            {},
+		"WaitError":       {"JobID"},
+		"Job": {"JobID", "Status", "PageCount", "PagesDone", "RequestID",
+			"CreatedAt", "StartedAt", "FinishedAt", "ExpiresAt",
+			"Result", "Error", "RetryAfter", "IdempotencyKey"},
 	}
-
-	got := parseSurface(t)
+	// Every exported struct type has its field list frozen here.
+	for typ := range got.fields {
+		if _, ok := wantFields[typ]; !ok {
+			t.Errorf("exported struct %s has no frozen field list", typ)
+		}
+	}
 
 	compare := func(kind string, want []string, got map[string]bool) {
 		t.Helper()
