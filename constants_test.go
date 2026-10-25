@@ -116,6 +116,7 @@ func TestSurfaceExported(t *testing.T) {
 	wantVariables := []string{
 		"ErrMissingAPIKey", "ErrInvalidAPIURL", "ErrInvalidTimeout", "ErrNilContext",
 		"ErrNoInstruction", "ErrNoFile", "ErrMissingFilename",
+		"ErrInvalidAPIKey", "ErrNilClient",
 	}
 	wantTypes := []string{
 		"Client", "Option", "QueryOption", "Mode", "Instruction", "File",

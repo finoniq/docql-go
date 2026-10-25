@@ -19,11 +19,18 @@ var (
 	// ErrMissingAPIKey is returned when no API key can be resolved, or an
 	// explicitly given key is empty or whitespace-only.
 	ErrMissingAPIKey = errors.New("docql: API key missing: pass WithAPIKey or set DOCQL_API_KEY")
+	// ErrInvalidAPIKey is returned when the API key, after surrounding
+	// whitespace is trimmed, still contains a control character (CR, LF, NUL
+	// or any other). The key is never part of the error text.
+	ErrInvalidAPIKey = errors.New("docql: API key contains a control character: check WithAPIKey or DOCQL_API_KEY")
 	// ErrInvalidAPIURL is returned when the API URL is empty or not an
 	// http:// or https:// URL.
 	ErrInvalidAPIURL = errors.New("docql: api_url must be an http:// or https:// URL: pass WithAPIURL or set DOCQL_API_URL")
 	// ErrInvalidTimeout is returned for a WithTimeout value of zero or less.
 	ErrInvalidTimeout = errors.New("docql: timeout must be greater than zero: pass a positive WithTimeout value")
+	// ErrNilClient is returned when QueryDocument is called on a nil *Client
+	// or a zero docql.Client{}; build clients with NewClient.
+	ErrNilClient = errors.New("docql: client is nil or not built by NewClient")
 	// ErrNilContext is returned when QueryDocument receives a nil context.
 	ErrNilContext = errors.New("docql: context must not be nil")
 	// ErrNoInstruction is returned when the Instruction is the zero value.

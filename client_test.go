@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -747,4 +748,95 @@ func TestNewClientConcurrentReplacedDefaultTransport(t *testing.T) {
 	}
 	assertFallbackTransport(t, shared)
 	sendProbe(t, clients[n-1], got)
+}
+
+// TestNewClientTrimsAndRejectsKey pins 12-REVIEW R1-WR-01: the key from
+// WithAPIKey and from DOCQL_API_KEY is trimmed before use, and a key that
+// still holds a control character is ErrInvalidAPIKey before any I/O, with
+// the key absent from the error text.
+func TestNewClientTrimsAndRejectsKey(t *testing.T) {
+	t.Run("trimmed", func(t *testing.T) {
+		t.Setenv("DOCQL_API_KEY", "")
+		explicit := captureCall(t, []Option{WithAPIKey("  dql_x \n")})
+		if got := explicit.header.Get("X-API-Key"); got != "dql_x" {
+			t.Errorf("WithAPIKey: X-API-Key = %q, want %q", got, "dql_x")
+		}
+		t.Setenv("DOCQL_API_KEY", " dql_x ")
+		fromEnv := captureCall(t, nil)
+		if got := fromEnv.header.Get("X-API-Key"); got != "dql_x" {
+			t.Errorf("DOCQL_API_KEY: X-API-Key = %q, want %q", got, "dql_x")
+		}
+	})
+
+	t.Run("control-characters-rejected", func(t *testing.T) {
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}))
+		defer srv.Close()
+
+		for _, bad := range []string{"\r", "\n", "\r\n", "\x00", "\x1f", "\x7f"} {
+			key := "dql_SECRET" + bad + "tail"
+			sources := map[string]func(t *testing.T) []Option{
+				"WithAPIKey": func(t *testing.T) []Option {
+					t.Setenv("DOCQL_API_KEY", "")
+					return []Option{WithAPIKey(key)}
+				},
+			}
+			// The environment cannot carry a NUL byte (os.Setenv rejects it).
+			if bad != "\x00" {
+				sources["DOCQL_API_KEY"] = func(t *testing.T) []Option {
+					t.Setenv("DOCQL_API_KEY", key)
+					return nil
+				}
+			}
+			for source, opts := range sources {
+				t.Run(fmt.Sprintf("%s/%q", source, bad), func(t *testing.T) {
+					client, err := NewClient(append(opts(t), WithAPIURL(srv.URL))...)
+					if client != nil {
+						t.Fatal("NewClient must return no client for a key with a control character")
+					}
+					if !errors.Is(err, ErrInvalidAPIKey) {
+						t.Fatalf("err = %v, want errors.Is(err, ErrInvalidAPIKey)", err)
+					}
+					if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "tail") {
+						t.Errorf("err text %q contains the key", err.Error())
+					}
+				})
+			}
+		}
+		if n := requests.Load(); n != 0 {
+			t.Fatalf("server saw %d requests, want 0", n)
+		}
+	})
+}
+
+// TestQueryDocumentNilClient pins 12-REVIEW WR-03: QueryDocument on a nil
+// *Client or a zero docql.Client{} returns ErrNilClient instead of panicking,
+// before a FilePath input is opened.
+func TestQueryDocumentNilClient(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-there.pdf")
+	var nilClient *Client
+	for name, c := range map[string]*Client{"nil": nilClient, "zero": {}} {
+		for fileName, file := range map[string]File{
+			"bytes": FileBytes([]byte("d"), "f.pdf"),
+			"path":  FilePath(missing),
+		} {
+			t.Run(name+"/"+fileName, func(t *testing.T) {
+				var err error
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							t.Fatalf("QueryDocument panicked: %v", r)
+						}
+					}()
+					_, err = c.QueryDocument(context.Background(), file, Query("q"))
+				}()
+				if !errors.Is(err, ErrNilClient) {
+					t.Fatalf("err = %v, want errors.Is(err, ErrNilClient)", err)
+				}
+			})
+		}
+	}
 }

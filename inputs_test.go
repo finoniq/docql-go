@@ -585,3 +585,32 @@ func TestInputEmptyQuery(t *testing.T) {
 		t.Fatalf("body must carry the query first and then params.mode, got %q", rec.body)
 	}
 }
+
+// TestOwnCloserConcurrentClose pins 12-REVIEW R1-WR-02: net/http closes the
+// request body from its write loop while QueryDocument's deferred close runs
+// on the caller goroutine, so ownCloser.close must be safe from two
+// goroutines at once (run under -race) and close the file exactly once.
+func TestOwnCloserConcurrentClose(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		f, err := os.CreateTemp(t.TempDir(), "doc-*.pdf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		o := &ownCloser{f: f}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for g := 0; g < 2; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				o.close()
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if err := f.Close(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("file not closed by ownCloser: second Close returned %v", err)
+		}
+	}
+}
