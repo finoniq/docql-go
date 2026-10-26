@@ -10,7 +10,8 @@
 #                fails if the tag no longer points at the prechecked commit,
 #                then warms proxy.golang.org, requests the pkg.go.dev fetch and
 #                creates the GitHub Release from the CHANGELOG section.
-#   4. verify    proves the result from a clean module through the real proxy.
+#   4. verify    proves the result from a clean module through the real proxy:
+#                the README quickstart and the README jobs example both run.
 #
 # The module proxy caches a fetched version forever (PITFALLS section 9), so no job
 # before the approval contacts proxy.golang.org or pkg.go.dev about docql-go: a
@@ -193,6 +194,12 @@ jobs:
         run: |
           set -euo pipefail
           scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG"
+      - name: clean module through the proxy, README jobs example
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG" --block jobs
       - name: pkg.go.dev shows the version with the licence
         run: |
           set -euo pipefail
