@@ -1,10 +1,10 @@
 # Continuous integration for the docql Go SDK (GO-05, SC4): the exact go.mod
 # shape (stdlib-only, no toolchain line), gofmt, go vet, staticcheck and the
 # README-equal example check, plus the unit suite with the race detector on
-# both supported toolchains — the oldstable cell must equal the go.mod floor,
-# stable must be newer. The contract suite against the pinned stub lives in
-# contract.yml. This workflow is reusable (workflow_call) so release.yml runs
-# the same checks on a tag.
+# both supported toolchains — the explicit floor cell must equal the go.mod
+# floor, stable must be newer. The contract suite against the pinned stub
+# lives in contract.yml. This workflow is reusable (workflow_call) so
+# release.yml runs the same checks on a tag.
 name: ci
 
 on:
@@ -69,7 +69,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: [oldstable, stable]
+        # The go.mod floor written out, not oldstable: a new Go minor must not
+        # fail CI or block a patch release. Raising the floor is a deliberate
+        # edit of go.mod and this cell together.
+        go-version: ["1.26", stable]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -96,9 +99,13 @@ jobs:
           a_minor=${ver#*.}
           a_minor=${a_minor%%.*}
           case "$GO_CELL" in
-            oldstable)
+            [0-9]*.[0-9]*)
+              if [ "$GO_CELL" != "$floor" ]; then
+                echo "the floor cell ($GO_CELL) is not the go.mod floor (go $floor) — keep the explicit matrix cell equal to the 'go' directive" >&2
+                exit 1
+              fi
               if [ "$a_major.$a_minor" != "$floor" ]; then
-                echo "oldstable moved past the go.mod floor — raise the 'go' directive (oldstable is $actual, floor is go $floor)" >&2
+                echo "the floor cell resolved to $actual, not go $floor" >&2
                 exit 1
               fi
               ;;

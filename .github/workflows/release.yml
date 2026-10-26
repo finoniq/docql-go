@@ -6,8 +6,9 @@
 #                origin/main, an annotated tag, and green guard/ci/contract push
 #                runs on main for that exact commit.
 #   2. ci, contract  run the same checks again on the tagged commit.
-#   3. publish   waits for the owner to approve the `release` environment, then
-#                warms proxy.golang.org, requests the pkg.go.dev fetch and
+#   3. publish   waits for the owner to approve the `release` environment,
+#                fails if the tag no longer points at the prechecked commit,
+#                then warms proxy.golang.org, requests the pkg.go.dev fetch and
 #                creates the GitHub Release from the CHANGELOG section.
 #   4. verify    proves the result from a clean module through the real proxy.
 #
@@ -88,7 +89,6 @@ jobs:
       contents: read
       packages: read
     uses: ./.github/workflows/contract.yml
-    secrets: inherit
 
   publish:
     needs: [precheck, ci, contract]
@@ -103,6 +103,20 @@ jobs:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.precheck.outputs.version }}
     steps:
+      # The approval can come hours after precheck, and a tag can be deleted and
+      # pushed again meanwhile: nothing below may act on a tag that moved.
+      - name: tag still points at the prechecked commit
+        env:
+          SHA: ${{ needs.precheck.outputs.sha }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cur=$(git ls-remote "https://github.com/$GH_REPO" "refs/tags/$TAG^{}" | cut -f1)
+          if [ -z "$SHA" ] || [ "$cur" != "$SHA" ] || [ "$GITHUB_SHA" != "$SHA" ]; then
+            echo "tag moved since precheck (precheck ${SHA:-<none>}, tag now ${cur:-<none>}, run $GITHUB_SHA)" >&2
+            exit 1
+          fi
+          echo "tag $TAG still points at $SHA"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
