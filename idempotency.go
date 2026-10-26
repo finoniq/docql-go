@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -53,6 +55,15 @@ func validateIdempotencyKey(k string) error {
 // Every *Error and *ConnectionError returned here carries IdempotencyKey, so
 // the caller can retry safely with WithIdempotencyKey.
 //
+// Before a retry re-reads the input, it waits until the transport has closed
+// every body of the previous attempt (attemptBodies). net/http's RoundTripper
+// contract lets the transport keep reading, and close, a request body after
+// RoundTrip has returned an early answer: a 503 sent before the upload was
+// consumed leaves the write loop inside the caller's Read, and rewinding the
+// caller's io.Seeker under it would corrupt the retry's bytes. The wait ends
+// when that body is closed or when ctx ends, which returns the same
+// *ConnectionError as a ctx end during the retry sleep.
+//
 // The cap counts SDK-level attempts only. net/http itself treats a POST that
 // carries an Idempotency-Key header and a non-nil GetBody as replayable, and
 // re-sends it once when a reused keep-alive connection fails before any
@@ -64,7 +75,7 @@ func validateIdempotencyKey(k string) error {
 func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string) (*Job, error) {
 	replayable := up.getBody != nil
 	for attempt := 1; ; attempt++ {
-		send := up
+		var reqBody io.ReadCloser = up.body
 		if attempt > 1 {
 			// A fresh, identical body from the start of the input; the
 			// boundary, length and content type of attempt 1 still hold.
@@ -76,12 +87,22 @@ func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string) (*
 					cause:          err,
 				}
 			}
-			again := *up
-			again.body = b
-			send = &again
+			reqBody = b
+		}
+		bodies := &attemptBodies{}
+		send := *up
+		send.body = bodies.track(reqBody)
+		if up.getBody != nil {
+			send.getBody = func() (io.ReadCloser, error) {
+				b, err := up.getBody()
+				if err != nil {
+					return nil, err
+				}
+				return bodies.track(b), nil
+			}
 		}
 
-		status, h, body, err := c.sendOnce(ctx, http.MethodPost, jobsPath, send, []string{key}, c.cfg.timeout)
+		status, h, body, err := c.sendOnce(ctx, http.MethodPost, jobsPath, &send, []string{key}, c.cfg.timeout)
 		if err != nil {
 			return nil, err // a *ConnectionError that already carries the key
 		}
@@ -115,6 +136,13 @@ func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string) (*
 			return nil, submitStopped(ctx, status, key)
 		case <-t.C:
 		}
+		// The next getBody may rewind the caller's reader: wait until the
+		// transport has released this attempt's body (see above).
+		select {
+		case <-bodies.released():
+		case <-ctx.Done():
+			return nil, submitStopped(ctx, status, key)
+		}
 		// The timer and a ctx deadline can fire at the same instant: never
 		// send once ctx has ended.
 		if ctx.Err() != nil {
@@ -134,4 +162,62 @@ func submitStopped(ctx context.Context, status int, key string) *ConnectionError
 		cause:          cause,
 		timeout:        errors.Is(cause, context.DeadlineExceeded),
 	}
+}
+
+// attemptBodies tracks the request bodies one submit attempt hands to the
+// transport: its first body and any GetBody replay net/http makes on its own.
+// released reports when every one of them has been closed, that is when the
+// transport has finished with the input (the RoundTripper contract: "callers
+// wanting to reuse the body for subsequent requests must arrange to wait for
+// the Close call before doing so").
+type attemptBodies struct {
+	mu   sync.Mutex
+	open int
+	idle chan struct{} // set while released waits; closed when open drops to 0
+}
+
+// track wraps one body handed to the transport.
+func (a *attemptBodies) track(b io.ReadCloser) io.ReadCloser {
+	a.mu.Lock()
+	a.open++
+	a.mu.Unlock()
+	return &trackedBody{ReadCloser: b, owner: a}
+}
+
+// released returns a channel that is closed once every tracked body has been
+// closed. It is called after the attempt's request has returned, when
+// net/http hands out no more bodies for it.
+func (a *attemptBodies) released() <-chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ch := make(chan struct{})
+	if a.open == 0 {
+		close(ch)
+	} else {
+		a.idle = ch
+	}
+	return ch
+}
+
+func (a *attemptBodies) closed() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.open--
+	if a.open == 0 && a.idle != nil {
+		close(a.idle)
+		a.idle = nil
+	}
+}
+
+// trackedBody is a request body whose first Close tells its attemptBodies.
+type trackedBody struct {
+	io.ReadCloser
+	owner *attemptBodies
+	once  sync.Once
+}
+
+func (b *trackedBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(b.owner.closed)
+	return err
 }

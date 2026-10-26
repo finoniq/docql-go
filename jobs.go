@@ -179,8 +179,12 @@ func (c *Client) jobConnectionError(ctx context.Context, cause error, up *upload
 // io.Seeker (rewound to the offset it had when SubmitDocument was called). A
 // plain io.Reader, a *bytes.Buffer or a pipe is sent once, and its first 503
 // or 409 is returned. A 429, any other status, a transport error and a
-// timeout are returned at once. When ctx ends during a retry sleep,
-// SubmitDocument returns a *ConnectionError wrapping ctx.Err() at once.
+// timeout are returned at once. Before a retry reads the file again,
+// SubmitDocument also waits until the HTTP transport has closed the previous
+// attempt's body: after an early answer the transport may still be reading
+// it, and a FileReader is never rewound under it. When ctx ends during a
+// retry sleep or that wait, SubmitDocument returns a *ConnectionError
+// wrapping ctx.Err() at once.
 //
 // Job.IdempotencyKey, Error.IdempotencyKey and ConnectionError.IdempotencyKey
 // carry the key sent, so a failed submit can be retried safely with

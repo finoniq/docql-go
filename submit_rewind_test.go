@@ -92,7 +92,8 @@ func (s *stallSeeker) Seek(offset int64, whence int) (int64, error) {
 // earlyAnswerServer answers the first request 503 upstream_unavailable with
 // Retry-After 1 without reading its body, once src has started its stall,
 // and every later one with the kit's 202 queued job after reading the whole
-// upload. It records the file part of each later request.
+// upload. It records the file part of each later request. Only POST
+// /v1/jobs requests are answered and counted.
 type earlyAnswerServer struct {
 	*httptest.Server
 	requests atomic.Int32
@@ -105,6 +106,12 @@ func newEarlyAnswerServer(t *testing.T, src *stallSeeker) *earlyAnswerServer {
 	queued := loadSubmitAnswers(t).queued
 	s := &earlyAnswerServer{}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != jobsPath {
+			// Not the SDK: something on the host can probe new loopback
+			// listeners with GET / (seen on WSL2), so only submits count.
+			http.NotFound(w, r)
+			return
+		}
 		if s.requests.Add(1) == 1 {
 			select {
 			case <-src.stalling:
