@@ -7,7 +7,7 @@ standard library only, so adding it cannot add a single dependency to yours.
 ## Install
 
 ```sh
-go get github.com/finoniq/docql-go@v0.2.0
+go get github.com/finoniq/docql-go@v0.2.1
 ```
 
 ```go
