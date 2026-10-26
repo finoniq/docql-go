@@ -454,9 +454,9 @@ func TestClientHeaders(t *testing.T) {
 		t.Fatalf("ContentLength = %d, want a known length", rec.contentLength)
 	}
 	ua := rec.header.Get("User-Agent")
-	uaRe := regexp.MustCompile(`^docql-go/0\.1\.0 \([^;()]+; [^/()]+/[^()]+\)$`)
+	uaRe := regexp.MustCompile(`^docql-go/` + regexp.QuoteMeta(Version) + ` \([^;()]+; [^/()]+/[^()]+\)$`)
 	if !uaRe.MatchString(ua) {
-		t.Fatalf("User-Agent = %q, want the docql-go/0.1.0 (goVersion; goos/goarch) form", ua)
+		t.Fatalf("User-Agent = %q, want the docql-go/%s (goVersion; goos/goarch) form", ua, Version)
 	}
 	for _, want := range []string{runtime.Version(), runtime.GOOS, runtime.GOARCH} {
 		if !strings.Contains(ua, want) {

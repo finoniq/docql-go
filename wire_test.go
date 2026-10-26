@@ -131,10 +131,10 @@ func assertGoldenRequest(t *testing.T, kit *goldenKit, want []byte, file File, i
 			t.Fatalf("header %s must never be sent (D-15)", k)
 		}
 	}
-	ua := regexp.MustCompile(`^docql-go/0\.1\.0 \([^;()]+; [^/()]+/[^()]+\)$`)
+	ua := regexp.MustCompile(`^docql-go/` + regexp.QuoteMeta(Version) + ` \([^;()]+; [^/()]+/[^()]+\)$`)
 	if !ua.MatchString(rec.header.Get("User-Agent")) {
-		t.Fatalf("User-Agent = %q, want the docql-go/0.1.0 (goVersion; goos/goarch) form (D-14)",
-			rec.header.Get("User-Agent"))
+		t.Fatalf("User-Agent = %q, want the docql-go/%s (goVersion; goos/goarch) form (D-14)",
+			rec.header.Get("User-Agent"), Version)
 	}
 }
 
