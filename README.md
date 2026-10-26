@@ -137,7 +137,9 @@ The same code is `ExampleClient_SubmitDocument` on
   input it can send again from its start: `docql.FilePath` (reopened),
   `docql.FileBytes`, or a `docql.FileReader` over an `io.Seeker` (rewound to
   where it was when you called `SubmitDocument`, and only once the transport
-  has let go of the previous attempt's body). Any other reader is sent once.
+  has let go of the previous attempt's body; if it has not after the smaller
+  of the client timeout and 30 s, the 503 or 409 comes back with its key
+  instead of a rewind). Any other reader is sent once.
   A job that ended `failed`, `job_interrupted` included, needs a new key: the
   old one replays the failure.
 - Go's transport may also re-send the submit once on its own, when a reused
@@ -194,7 +196,9 @@ Never turn certificate verification off.
   unchanged data) rather than rewinding the same one. Do not modify
   `FileBytes` data after passing it to a call either. `SubmitDocument`'s own
   same-key retry waits for the transport to let go of the previous attempt's
-  body before it rewinds a reader.
+  body before it rewinds a reader, for at most the smaller of the client
+  timeout and 30 s; past that it returns the 503 or 409 with its key and
+  never rewinds the reader.
 - There are no client-side type or size checks — the server is the authority.
 - A reader whose length cannot be measured is sent chunked; an oversized
   chunked upload may answer `503` instead of `413`. The API rejects files

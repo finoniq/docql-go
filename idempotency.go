@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+// submitBodyReleaseGrace caps how long a FileReader retry waits for the
+// transport to release the previous attempt's body (26-REVIEW WR-03). The
+// wait is min(client timeout, submitBodyReleaseGrace).
+const submitBodyReleaseGrace = 30 * time.Second
+
 // newIdempotencyKey returns a fresh Idempotency-Key from crypto/rand (D-07).
 func newIdempotencyKey() string {
 	return rand.Text()
@@ -62,13 +67,22 @@ func validateIdempotencyKey(k string) error {
 // transport keep reading, and close, a request body after RoundTrip has
 // returned an early answer: a 503 sent before the upload was consumed leaves
 // the write loop inside the caller's Read, and rewinding the caller's
-// io.Seeker under it would corrupt the retry's bytes. The wait ends when that
-// body is closed or when ctx ends, which returns the same *ConnectionError as
-// a ctx end during the retry sleep. FileBytes and FilePath retries do not
-// wait: their getBody builds an independent reader (fresh bytes.Readers over
-// the same immutable data, or a newly opened file), so the previous attempt's
-// transport can keep its body as long as it likes (26-REVIEW WR-03: an
-// injected RoundTripper that never closes the body must not block the call).
+// io.Seeker under it would corrupt the retry's bytes. The wait starts after
+// the retry sleep and ends at the first of:
+//
+//   - every body of the previous attempt closed: the retry rewinds and sends;
+//   - the grace, min(client timeout, submitBodyReleaseGrace = 30 s), passing:
+//     the last 503 or 409 *Error is returned with IdempotencyKey set, and the
+//     reader, which the transport may still hold, is never sought again;
+//   - ctx ending: the same *ConnectionError as a ctx end during the sleep.
+//
+// If the release and the grace are ready at once, either branch is safe: the
+// retry rewinds only a released reader, and giving up returns the key.
+// FileBytes and FilePath retries do not wait: their getBody builds an
+// independent reader (fresh bytes.Readers over the same immutable data, or a
+// newly opened file), so the previous attempt's transport can keep its body
+// as long as it likes (26-REVIEW WR-03: an injected RoundTripper that never
+// closes the body must not block the call).
 //
 // The cap counts SDK-level attempts only. net/http itself treats a POST that
 // carries an Idempotency-Key header and a non-nil GetBody as replayable, and
@@ -145,9 +159,16 @@ func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string, re
 		// The next getBody rewinds the caller's reader: wait until the
 		// transport has released this attempt's body (see above).
 		if rewindsCaller {
+			grace := time.NewTimer(min(c.cfg.timeout, submitBodyReleaseGrace))
 			select {
 			case <-bodies.released():
+				grace.Stop()
+			case <-grace.C:
+				// The transport may still hold the reader: fail safe with
+				// the answer and its key instead of rewinding under it.
+				return nil, e
 			case <-ctx.Done():
+				grace.Stop()
 				return nil, submitStopped(ctx, status, key)
 			}
 		}
