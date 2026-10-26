@@ -65,6 +65,87 @@ DocQL's brace-and-field syntax; pass `docql.Prompt(...)` instead for a
 natural-language instruction — a call takes exactly one `docql.Query` or
 `docql.Prompt`.
 
+## Long documents: jobs
+
+Use a job for a long document: a proxied edge cuts a single call at about
+100–120 s, while `docql.ModeStandard` may take up to 540 s. `SubmitDocument`
+uploads the file and answers at once with a queued job, and `Wait` polls it
+until it finishes.
+
+<!-- docql:jobs:start -->
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	docql "github.com/finoniq/docql-go"
+)
+
+func main() {
+	client, err := docql.NewClient() // reads DOCQL_API_KEY and DOCQL_API_URL
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+
+	job, err := client.SubmitDocument(
+		ctx,
+		docql.FilePath("invoice.pdf"),
+		docql.Query("{ invoice_number total_amount }"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	job, err = client.Wait(ctx, job.JobID) // polls until succeeded or cancelled
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(job.Status)
+	if job.Result != nil {
+		fmt.Println(string(job.Result.Data))
+	}
+}
+```
+<!-- docql:jobs:end -->
+
+The same code is `ExampleClient_SubmitDocument` on
+[pkg.go.dev](https://pkg.go.dev/github.com/finoniq/docql-go).
+
+- `GetJob(ctx, jobID)` makes one poll and returns the job as it is; a `failed`
+  job is returned too (read `job.Error`), with a nil error.
+- `CancelJob(ctx, jobID)` asks DocQL to cancel and returns the job at that
+  moment, which may still be `docql.JobStatusRunning`: poll to confirm.
+- `Wait` returns a `succeeded` or `cancelled` job and returns the job's
+  `*docql.Error` for a `failed` one. Its deadline is your `ctx`'s, else 15
+  minutes, and it never sends a poll at or past that deadline. When `ctx` is
+  cancelled or the deadline passes, it returns a `*docql.WaitError` that
+  carries `JobID` and for which `errors.Is(err, ctx.Err())` holds.
+  `docql.WithPollInterval(d)` raises the shortest sleep between polls. `Wait`
+  never cancels the job: `GetJob` or another `Wait` picks it up again.
+- Every submit carries an `Idempotency-Key`, generated for you unless you pass
+  `docql.WithIdempotencyKey(key)`; it is on the returned job
+  (`Job.IdempotencyKey`) and on every error the submit returns
+  (`Error.IdempotencyKey`, `ConnectionError.IdempotencyKey`). DocQL scopes the
+  key to your organisation. Unlike `QueryDocument`, `SubmitDocument` retries a
+  503 and a 409 `idempotency_in_progress` with the same key, at most 4
+  attempts in all (a 503 may mean the job was created anyway), but only for
+  input it can send again from its start: `docql.FilePath` (reopened),
+  `docql.FileBytes`, or a `docql.FileReader` over an `io.Seeker` (rewound to
+  where it was when you called `SubmitDocument`, and only once the transport
+  has let go of the previous attempt's body). Any other reader is sent once.
+  A job that ended `failed`, `job_interrupted` included, needs a new key: the
+  old one replays the failure.
+- Go's transport may also re-send the submit once on its own, when a reused
+  connection fails before any answer arrives. That hidden attempt carries the
+  same key and the same bytes, so DocQL answers it with the same job.
+- `job.PagesDone` stays 0 while DocQL runs OCR, so show progress as
+  indeterminate while a running job reports 0 pages done.
+
 ## Configuration
 
 | Option | Env variable | Default | Notes |
@@ -96,7 +177,7 @@ Never turn certificate verification off.
 
 ## Files
 
-`QueryDocument` takes one `docql.File`, built with `docql.FilePath(path)`,
+`QueryDocument` and `SubmitDocument` take one `docql.File`, built with `docql.FilePath(path)`,
 `docql.FileBytes(data, name)` or `docql.FileReader(r, name)`:
 
 - The filename rule: `docql.WithFilename` is sent verbatim; otherwise a path
@@ -111,7 +192,9 @@ Never turn certificate verification off.
   transport may still read from it briefly after the call has returned, so
   retry with a fresh reader (reopen the file, or a new `bytes.Reader` over
   unchanged data) rather than rewinding the same one. Do not modify
-  `FileBytes` data after passing it to a call either.
+  `FileBytes` data after passing it to a call either. `SubmitDocument`'s own
+  same-key retry waits for the transport to let go of the previous attempt's
+  body before it rewinds a reader.
 - There are no client-side type or size checks — the server is the authority.
 - A reader whose length cannot be measured is sent chunked; an oversized
   chunked upload may answer `503` instead of `413`. The API rejects files
@@ -164,7 +247,7 @@ Every reason below is exported as a `docql.Reason…` constant
 
 ## Retrying
 
-The SDK never retries — every call is billed. Retry yourself, only when
+`QueryDocument` never retries — every call is billed. Retry it yourself, only when
 `errors.As` finds a `*docql.Error` with `Retryable` true, sleeping
 `RetryAfter` when it is greater than 0 and a capped exponential backoff
 otherwise, with at most 5 attempts and respect for your context:

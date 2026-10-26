@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# scripts/run-readme.sh — run the README quickstart against the pinned stub.
+# scripts/run-readme.sh — run a README example against the pinned stub.
 #
-# Extracts the single fenced Go block between the docql:quickstart markers of
-# README.md, writes it as a package main program into a fresh temporary
-# directory next to invoice.pdf (the golden kit's ascii-query document), and
-# runs it there with `go run`, with DOCQL_API_KEY and DOCQL_API_URL pointing
-# at the stub. CI and the release verify job run this script unchanged.
+# Extracts the single fenced Go block between the docql:<block> markers of
+# README.md (--block quickstart, the default, or --block jobs), writes it as a
+# package main program into a fresh temporary directory next to invoice.pdf
+# (the golden kit's ascii-query document), and runs it there with `go run`,
+# with DOCQL_API_KEY and DOCQL_API_URL pointing at the stub. CI and the
+# release verify job run this script unchanged.
 #
 # Usage:
 #   DOCQL_STUB_URL=http://127.0.0.1:18081 scripts/run-readme.sh
+#   DOCQL_STUB_URL=... scripts/run-readme.sh --block jobs
 #   DOCQL_STUB_URL=... scripts/run-readme.sh --readme PATH
-#   DOCQL_STUB_URL=... scripts/run-readme.sh --module-version VERSION
+#   DOCQL_STUB_URL=... scripts/run-readme.sh --module-version VERSION [--block jobs]
 #
 # Local mode (default) builds against this checkout with GOPROXY=off and a
 # replace directive, proving the quickstart needs no third-party module and
@@ -18,10 +20,11 @@
 # through proxy.golang.org with checksum verification on, prints
 # RESOLVED_VERSION=<v>, checks the resolved version against V, requires the
 # module's own go.mod to carry no require/toolchain line (NO_REQUIRE_OK) and
-# then runs the program — the release dry run for the README quickstart.
+# then runs the program — the release dry run for the README examples.
 #
-# Prints README_QUICKSTART_OK on success and README_QUICKSTART_MISSING when a
-# marker or the fenced block is unusable. Exits non-zero on any failure.
+# Prints README_QUICKSTART_OK (README_JOBS_OK for --block jobs) on success and
+# README_QUICKSTART_MISSING (README_JOBS_MISSING) when a marker or the fenced
+# block is unusable. Exits non-zero on any failure.
 
 set -euo pipefail
 
@@ -30,8 +33,21 @@ ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 README="$ROOT/README.md"
 MODULE_VERSION=""
+BLOCK=quickstart
+usage() {
+  echo "usage: scripts/run-readme.sh [--block quickstart|jobs] [--readme PATH] [--module-version VERSION]" >&2
+  exit 2
+}
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --block)
+      [ "$#" -ge 2 ] || { echo "--block needs a name" >&2; exit 2; }
+      case "$2" in
+        quickstart|jobs) BLOCK=$2 ;;
+        *) usage ;;
+      esac
+      shift 2
+      ;;
     --readme)
       [ "$#" -ge 2 ] || { echo "--readme needs a path" >&2; exit 2; }
       README=$2
@@ -43,8 +59,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     *)
-      echo "usage: scripts/run-readme.sh [--readme PATH] [--module-version VERSION]" >&2
-      exit 2
+      usage
       ;;
   esac
 done
@@ -55,11 +70,12 @@ if [ -z "$STUB_URL" ]; then
   exit 1
 fi
 
-START='<!-- docql:quickstart:start -->'
-END='<!-- docql:quickstart:end -->'
+START="<!-- docql:$BLOCK:start -->"
+END="<!-- docql:$BLOCK:end -->"
+TAG=$(printf '%s' "$BLOCK" | tr 'a-z' 'A-Z')
 
 missing() {
-  echo "README_QUICKSTART_MISSING" >&2
+  echo "README_${TAG}_MISSING" >&2
   exit 1
 }
 
@@ -98,7 +114,7 @@ if [ -n "$MODULE_VERSION" ]; then
   # and no private-module bypass, so what is executed is what the registry
   # serves. The retry loop absorbs proxy lag behind a fresh tag or push.
   cat > "$TMP/go.mod" <<EOF
-module quickstart
+module $BLOCK
 
 go 1.26
 EOF
@@ -144,7 +160,7 @@ EOF
 else
   # Local mode: build against this checkout, offline.
   cat > "$TMP/go.mod" <<EOF
-module quickstart
+module $BLOCK
 
 go 1.26
 
@@ -159,15 +175,19 @@ export DOCQL_API_KEY="$API_KEY"
 export DOCQL_API_URL="$STUB_URL"
 
 set +e
-out=$(cd "$TMP" && timeout 120 go run . 2>"$TMP/quickstart.stderr")
+out=$(cd "$TMP" && timeout 120 go run . 2>"$TMP/$BLOCK.stderr")
 status=$?
 set -e
 if [ "$status" -ne 0 ]; then
-  cat "$TMP/quickstart.stderr" >&2
-  echo "the README quickstart failed (exit $status)" >&2
+  cat "$TMP/$BLOCK.stderr" >&2
+  if [ "$BLOCK" = quickstart ]; then
+    echo "the README quickstart failed (exit $status)" >&2
+  else
+    echo "the README $BLOCK example failed (exit $status)" >&2
+  fi
   exit 1
 fi
 if [ -n "$out" ]; then
   printf '%s\n' "$out"
 fi
-echo "README_QUICKSTART_OK"
+echo "README_${TAG}_OK"

@@ -34,3 +34,35 @@ func ExampleClient_QueryDocument() {
 	}
 	fmt.Println(string(res.Data))
 }
+
+// ExampleClient_SubmitDocument is the README jobs example: it submits
+// invoice.pdf as a job, waits until the job has finished and prints its
+// status and, for a succeeded job, the extraction data. scripts/check-example.sh
+// fails when this body and the README's main() drift apart. It has no Output
+// comment, so `go test` compiles it without running it.
+func ExampleClient_SubmitDocument() {
+	client, err := docql.NewClient() // reads DOCQL_API_KEY and DOCQL_API_URL
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+
+	job, err := client.SubmitDocument(
+		ctx,
+		docql.FilePath("invoice.pdf"),
+		docql.Query("{ invoice_number total_amount }"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	job, err = client.Wait(ctx, job.JobID) // polls until succeeded or cancelled
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(job.Status)
+	if job.Result != nil {
+		fmt.Println(string(job.Result.Data))
+	}
+}
