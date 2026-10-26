@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -27,6 +28,9 @@ import (
 // It records the Idempotency-Key lines and the file part of every request.
 type openBodyScript struct {
 	answers []scriptAnswer
+	// releaseFirstAfter, when set, closes request 1's body that long after
+	// it was answered, the way a slow but conforming transport lets go.
+	releaseFirstAfter time.Duration
 
 	mu    sync.Mutex
 	keys  [][]string
@@ -50,6 +54,10 @@ func (s *openBodyScript) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	s.answered++
 	s.mu.Unlock()
+	if i == 0 && s.releaseFirstAfter > 0 && r.Body != nil {
+		body := r.Body
+		time.AfterFunc(s.releaseFirstAfter, func() { _ = body.Close() })
+	}
 	a := s.answers[i]
 	h := http.Header{}
 	for k, v := range a.Headers {
@@ -192,4 +200,138 @@ func TestSubmitRetryFilePathNonClosingTransport(t *testing.T) {
 		return c.SubmitDocument(context.Background(), FilePath(path), Query("q"))
 	})
 	checkRetriedJob(t, s, r)
+}
+
+// seekCounter is a caller's io.ReadSeeker that records a Seek made after
+// request 1 was answered: the SDK rewinding the reader for a retry.
+type seekCounter struct {
+	r      *bytes.Reader
+	script *openBodyScript
+
+	mu        sync.Mutex
+	seeks     int
+	lateSeeks int
+}
+
+func newSeekCounter(data []byte, script *openBodyScript) *seekCounter {
+	return &seekCounter{r: bytes.NewReader(data), script: script}
+}
+
+func (s *seekCounter) Read(p []byte) (int, error) { return s.r.Read(p) }
+
+func (s *seekCounter) Seek(offset int64, whence int) (int64, error) {
+	late := s.script.answeredSoFar() > 0
+	s.mu.Lock()
+	s.seeks++
+	if late {
+		s.lateSeeks++
+	}
+	s.mu.Unlock()
+	return s.r.Seek(offset, whence)
+}
+
+func (s *seekCounter) seeksAfterRequest1() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lateSeeks
+}
+
+// checkGaveUp asserts SubmitDocument returned request 1's 503 with its key
+// after exactly one request, without rewinding the caller's reader.
+func checkGaveUp(t *testing.T, s *openBodyScript, src *seekCounter, err error) *Error {
+	t.Helper()
+	de := asError(t, err)
+	keys := s.keysSent()
+	if len(keys) != 1 {
+		t.Fatalf("requests = %d, want 1 (no retry while the previous body may be in use)", len(keys))
+	}
+	if de.Status != http.StatusServiceUnavailable || de.Reason != ReasonUpstreamUnavailable {
+		t.Errorf("got %d %q, want the 503 upstream_unavailable", de.Status, de.Reason)
+	}
+	if len(keys[0]) != 1 || de.IdempotencyKey != keys[0][0] {
+		t.Errorf("Error.IdempotencyKey is not the key sent on request 1")
+	}
+	if n := src.seeksAfterRequest1(); n != 0 {
+		t.Errorf("the caller's reader was sought %d times after request 1 was answered, want 0", n)
+	}
+	return de
+}
+
+func TestSubmitRetryReaderNonClosingTransportGivesUp(t *testing.T) {
+	a := loadSubmitAnswers(t)
+	s := &openBodyScript{answers: []scriptAnswer{a.unavailable.withHeader("retry-after", "1")}}
+	src := newSeekCounter(releaseTestData, s)
+	c := s.client(t, WithTimeout(2*time.Second))
+
+	r := submitWithWatchdog(t, func() (*Job, error) {
+		return c.SubmitDocument(context.Background(), FileReader(src, "f.pdf"), Query("q"))
+	})
+	checkGaveUp(t, s, src, r.err)
+	t.Logf("returned after %v (1 s Retry-After sleep, then the 2 s grace)", r.elapsed.Round(time.Millisecond))
+	if r.elapsed < 2900*time.Millisecond || r.elapsed > 6*time.Second {
+		t.Errorf("returned after %v, want about 3 s (1 s sleep plus the 2 s client timeout as the grace)", r.elapsed.Round(time.Millisecond))
+	}
+}
+
+func TestSubmitRetryReaderReleaseGraceCappedAt30s(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a := loadSubmitAnswers(t)
+		s := &openBodyScript{answers: []scriptAnswer{a.unavailable.withHeader("retry-after", "1")}}
+		src := newSeekCounter(releaseTestData, s)
+		c := s.client(t) // the default 660 s timeout: the 30 s cap applies
+
+		start := time.Now()
+		_, err := c.SubmitDocument(context.Background(), FileReader(src, "f.pdf"), Query("q"))
+		elapsed := time.Since(start)
+		checkGaveUp(t, s, src, err)
+		t.Logf("returned after %v on the bubble clock", elapsed)
+		if elapsed != 31*time.Second {
+			t.Errorf("returned after %v, want exactly 31s (1 s sleep plus the 30 s grace)", elapsed)
+		}
+	})
+}
+
+func TestSubmitRetryReaderGivesUpWithTheKey(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a := loadSubmitAnswers(t)
+		s := &openBodyScript{answers: []scriptAnswer{a.unavailable.withHeader("retry-after", "1"), a.queued}}
+		c := s.client(t)
+
+		src := newSeekCounter(releaseTestData, s)
+		_, err := c.SubmitDocument(context.Background(), FileReader(src, "f.pdf"), Query("q"))
+		de := checkGaveUp(t, s, src, err)
+
+		// The caller resubmits with the returned key and a fresh reader.
+		job, err := c.SubmitDocument(context.Background(), FileReader(bytes.NewReader(releaseTestData), "f.pdf"), Query("q"), WithIdempotencyKey(de.IdempotencyKey))
+		if err != nil {
+			t.Fatalf("resubmit: %v", err)
+		}
+		keys := s.keysSent()
+		if len(keys) != 2 || len(keys[1]) != 1 || keys[1][0] != de.IdempotencyKey {
+			t.Fatalf("the resubmit's first request did not carry the key the 503 returned (%d requests)", len(keys))
+		}
+		if job.IdempotencyKey != de.IdempotencyKey || job.Status != JobStatusQueued {
+			t.Errorf("resubmit got %q with another key, want the queued job under the returned key", job.Status)
+		}
+	})
+}
+
+func TestSubmitRetryReaderReleasedInsideTheGraceIsRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a := loadSubmitAnswers(t)
+		s := &openBodyScript{
+			answers:           []scriptAnswer{a.unavailable.withHeader("retry-after", "1"), a.queued},
+			releaseFirstAfter: 5 * time.Second,
+		}
+		src := newSeekCounter(releaseTestData, s)
+		c := s.client(t)
+
+		start := time.Now()
+		job, err := c.SubmitDocument(context.Background(), FileReader(src, "f.pdf"), Query("q"))
+		elapsed := time.Since(start)
+		checkRetriedJob(t, s, submitResult{job: job, err: err, elapsed: elapsed})
+		if elapsed != 5*time.Second {
+			t.Errorf("returned after %v, want 5s (the retry waits for the release, not the 30 s grace)", elapsed)
+		}
+	})
 }
