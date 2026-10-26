@@ -105,6 +105,13 @@ Never turn certificate verification off.
   the call fails with `docql.ErrMissingFilename` before anything is sent.
 - A reader is read from its current position and never closed. A file the SDK
   opened from a path is closed by the SDK.
+- A reader belongs to the call until the call returns: do not read, seek,
+  reuse or mutate it (or the buffer behind it) meanwhile. After an early error
+  answer, such as a `413` or `401` before the whole upload was sent, the HTTP
+  transport may still read from it briefly after the call has returned, so
+  retry with a fresh reader (reopen the file, or a new `bytes.Reader` over
+  unchanged data) rather than rewinding the same one. Do not modify
+  `FileBytes` data after passing it to a call either.
 - There are no client-side type or size checks — the server is the authority.
 - A reader whose length cannot be measured is sent chunked; an oversized
   chunked upload may answer `503` instead of `413`. The API rejects files

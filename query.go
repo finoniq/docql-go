@@ -67,7 +67,8 @@ type File struct {
 // FileBytes builds a File from raw contents (D-06). name names the uploaded
 // file part; a call can override it with WithFilename. Nil or empty data is a
 // zero-length file; there is no client-side size check, the server is the
-// authority.
+// authority. Do not modify data after passing it to a call: the transport may
+// still read it briefly after an early error answer (see FileReader).
 func FileBytes(data []byte, name string) File {
 	return File{kind: fileBytes, data: data, name: name}
 }
@@ -85,6 +86,13 @@ func FilePath(path string) File {
 // measured when it can be (a regular *os.File, an io.Seeker, or a type with
 // Len, in that order); an unmeasurable reader is sent with chunked encoding,
 // so an oversized upload may then answer 503 instead of the DocQL-shaped 413.
+//
+// The reader belongs to the call until the call returns: do not read, seek,
+// reuse or mutate it (or the buffer behind it) meanwhile. After an early error
+// answer, such as a 413 or 401 before the whole upload was sent, the HTTP
+// transport may still read from it briefly after the call has returned, so
+// retry with a fresh reader (reopen the file, or a new bytes.Reader over
+// unchanged data) rather than rewinding this one.
 func FileReader(r io.Reader, name string) File {
 	return File{kind: fileReader, reader: r, name: name}
 }
