@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,6 +55,16 @@ import (
 // bindings and captures, and every fingerprint and key embeds the case id
 // plus the run token, so the order the cases run in (-shuffle=on) never
 // changes an outcome.
+//
+// Edge mode (DOCQL_CONTRACT_EDGE=1, 26-11): docql-console
+// deploy/scripts/sdk-jobs-edge.sh runs TestContractJobCases through Caddy ->
+// gateway -> stub. Only the case ids in DOCQL_EDGE_CASE_IDS run (the ones the
+// console's Node edge runner replayed); keys valid and validOther become the
+// gateway keys in DOCQL_EDGE_KEY (test org 1) and DOCQL_EDGE_KEY_OTHER (test
+// org 2), so the cross-org cases prove the gateway's tenant; invalid stays the
+// kit's never-issued key. There is no kit gate (Caddy exposes no /__stub
+// routes), and TLS trusts only the Caddy root CA in DOCQL_EDGE_CA. Outside
+// edge mode nothing changes.
 
 // jobKitStep is one step of a kit job case.
 type jobKitStep struct {
@@ -228,15 +241,21 @@ type capturedExchange struct {
 	wire   wireAnswer
 }
 
-// capturingTransport is the default transport plus a record of every answer,
-// its body read in full and handed on unchanged.
+// capturingTransport is the default transport (or, in edge mode, the edge
+// transport) plus a record of every answer, its body read in full and handed
+// on unchanged.
 type capturingTransport struct {
-	mu   sync.Mutex
-	seen []capturedExchange
+	inner http.RoundTripper
+	mu    sync.Mutex
+	seen  []capturedExchange
 }
 
 func (c *capturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	inner := c.inner
+	if inner == nil {
+		inner = http.DefaultTransport
+	}
+	resp, err := inner.RoundTrip(req)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +470,7 @@ type jobCaseRunner struct {
 // submit frames its upload on its own goroutine.
 var boundarySeam sync.Mutex
 
-func newJobCaseRunner(t *testing.T, kit *jobKitFile, c *jobKitCase, run, base string) *jobCaseRunner {
+func newJobCaseRunner(t *testing.T, kit *jobKitFile, c *jobKitCase, run, base string, edge *jobEdge) *jobCaseRunner {
 	t.Helper()
 	r := &jobCaseRunner{
 		t: t, kit: kit, c: c, run: run,
@@ -461,6 +480,11 @@ func newJobCaseRunner(t *testing.T, kit *jobKitFile, c *jobKitCase, run, base st
 		jobs:      map[string]string{},
 		pending:   map[string]*pendingSubmit{},
 		captured:  map[string]wireAnswer{},
+	}
+	if edge != nil {
+		r.transport.inner = edge.transport
+		r.keys["valid"] = edge.keyValid
+		r.keys["validOther"] = edge.keyOther
 	}
 	for name, key := range r.keys {
 		cl, err := NewClient(WithAPIKey(key), WithAPIURL(base), WithHTTPClient(&http.Client{Transport: r.transport}))
@@ -1155,18 +1179,95 @@ func TestContractJobCases(t *testing.T) {
 	if len(cases) == 0 {
 		t.Fatal("no stub job case selected")
 	}
-	base := stubURL(t)
+	var edge *jobEdge
+	var base string
+	if os.Getenv("DOCQL_CONTRACT_EDGE") == "1" {
+		edge = loadJobEdge(t)
+		base = strings.TrimRight(os.Getenv("DOCQL_STUB_URL"), "/")
+		cases = edge.filter(t, cases)
+	} else {
+		base = stubURL(t)
+	}
 	run := runToken(t)
 	ran := 0
 	for _, c := range cases {
 		t.Run(c.ID, func(t *testing.T) {
-			newJobCaseRunner(t, kit, c, run, base).runCase()
+			newJobCaseRunner(t, kit, c, run, base, edge).runCase()
 			ran++
 		})
 	}
 	if ran != len(cases) {
 		t.Fatalf("ran %d of %d job cases: a subtest stopped before its last assertion", ran, len(cases))
 	}
+}
+
+// jobEdge is the edge-mode input of TestContractJobCases.
+type jobEdge struct {
+	keyValid, keyOther string
+	ids                map[string]bool
+	transport          http.RoundTripper
+}
+
+// loadJobEdge reads the edge env; a missing input fails the test, never a
+// silent skip. The transport trusts only DOCQL_EDGE_CA and dials 127.0.0.1 at
+// the requested port, so the URL host stays the TLS server name, the
+// certificate name and the Host header (curl --resolve): the console never
+// relies on *.localhost resolving, and Go on macOS ignores SSL_CERT_FILE.
+func loadJobEdge(t *testing.T) *jobEdge {
+	t.Helper()
+	env := func(name string) string {
+		v := os.Getenv(name)
+		if v == "" {
+			t.Fatalf("edge mode (DOCQL_CONTRACT_EDGE=1) needs env %s", name)
+		}
+		return v
+	}
+	e := &jobEdge{keyValid: env("DOCQL_EDGE_KEY"), keyOther: env("DOCQL_EDGE_KEY_OTHER"), ids: map[string]bool{}}
+	for _, id := range strings.Split(env("DOCQL_EDGE_CASE_IDS"), ",") {
+		if id != "" {
+			e.ids[id] = true
+		}
+	}
+	pem, err := os.ReadFile(env("DOCQL_EDGE_CA"))
+	if err != nil {
+		t.Fatalf("read DOCQL_EDGE_CA: %v", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		t.Fatal("DOCQL_EDGE_CA holds no PEM certificate")
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	}
+	e.transport = tr
+	return e
+}
+
+// filter keeps the cases DOCQL_EDGE_CASE_IDS names, before any subtest
+// starts; an id this runner does not run fails the test.
+func (e *jobEdge) filter(t *testing.T, cases []*jobKitCase) []*jobKitCase {
+	t.Helper()
+	var out []*jobKitCase
+	known := map[string]bool{}
+	for _, c := range cases {
+		known[c.ID] = true
+		if e.ids[c.ID] {
+			out = append(out, c)
+		}
+	}
+	for id := range e.ids {
+		if !known[id] {
+			t.Fatalf("DOCQL_EDGE_CASE_IDS names case %s, which this runner does not run", id)
+		}
+	}
+	return out
 }
 
 // countedRequest is one exchange the counting transport saw.
