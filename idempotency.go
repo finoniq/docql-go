@@ -55,14 +55,20 @@ func validateIdempotencyKey(k string) error {
 // Every *Error and *ConnectionError returned here carries IdempotencyKey, so
 // the caller can retry safely with WithIdempotencyKey.
 //
-// Before a retry re-reads the input, it waits until the transport has closed
-// every body of the previous attempt (attemptBodies). net/http's RoundTripper
-// contract lets the transport keep reading, and close, a request body after
-// RoundTrip has returned an early answer: a 503 sent before the upload was
-// consumed leaves the write loop inside the caller's Read, and rewinding the
-// caller's io.Seeker under it would corrupt the retry's bytes. The wait ends
-// when that body is closed or when ctx ends, which returns the same
-// *ConnectionError as a ctx end during the retry sleep.
+// rewindsCaller is true when the retry re-reads the caller's own reader (a
+// FileReader over an io.Seeker). Only then does a retry wait, before it
+// re-reads the input, until the transport has closed every body of the
+// previous attempt (attemptBodies). net/http's RoundTripper contract lets the
+// transport keep reading, and close, a request body after RoundTrip has
+// returned an early answer: a 503 sent before the upload was consumed leaves
+// the write loop inside the caller's Read, and rewinding the caller's
+// io.Seeker under it would corrupt the retry's bytes. The wait ends when that
+// body is closed or when ctx ends, which returns the same *ConnectionError as
+// a ctx end during the retry sleep. FileBytes and FilePath retries do not
+// wait: their getBody builds an independent reader (fresh bytes.Readers over
+// the same immutable data, or a newly opened file), so the previous attempt's
+// transport can keep its body as long as it likes (26-REVIEW WR-03: an
+// injected RoundTripper that never closes the body must not block the call).
 //
 // The cap counts SDK-level attempts only. net/http itself treats a POST that
 // carries an Idempotency-Key header and a non-nil GetBody as replayable, and
@@ -72,7 +78,7 @@ func validateIdempotencyKey(k string) error {
 // and it can never create a second job. GetBody stays set on purpose: the
 // v0.1 upload relies on it, and clearing it would only trade that safe
 // replay for a spurious connection error.
-func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string) (*Job, error) {
+func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string, rewindsCaller bool) (*Job, error) {
 	replayable := up.getBody != nil
 	for attempt := 1; ; attempt++ {
 		var reqBody io.ReadCloser = up.body
@@ -136,12 +142,14 @@ func (c *Client) submitWithRetry(ctx context.Context, up *upload, key string) (*
 			return nil, submitStopped(ctx, status, key)
 		case <-t.C:
 		}
-		// The next getBody may rewind the caller's reader: wait until the
+		// The next getBody rewinds the caller's reader: wait until the
 		// transport has released this attempt's body (see above).
-		select {
-		case <-bodies.released():
-		case <-ctx.Done():
-			return nil, submitStopped(ctx, status, key)
+		if rewindsCaller {
+			select {
+			case <-bodies.released():
+			case <-ctx.Done():
+				return nil, submitStopped(ctx, status, key)
+			}
 		}
 		// The timer and a ctx deadline can fire at the same instant: never
 		// send once ctx has ended.

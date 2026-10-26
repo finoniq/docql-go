@@ -229,7 +229,10 @@ func (c *Client) SubmitDocument(ctx context.Context, file File, instr Instructio
 	// A file the SDK opened from a path is closed on every path (D-07).
 	defer up.closer.close()
 
-	return c.submitWithRetry(ctx, up, key)
+	// Only a caller's FileReader is rewound for a retry; FileBytes and
+	// FilePath build an independent body each time.
+	rewindsCaller := file.kind == fileReader
+	return c.submitWithRetry(ctx, up, key, rewindsCaller)
 }
 
 // jobCall checks the arguments every job-id method shares and returns the
