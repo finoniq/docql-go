@@ -223,8 +223,11 @@ Three kinds:
   deadline expiry, and `errors.Is` keeps working for
   `context.DeadlineExceeded` and `context.Canceled`.
 - The validation sentinels (match with `errors.Is`): `docql.ErrMissingAPIKey`,
-  `docql.ErrInvalidAPIURL`, `docql.ErrInvalidTimeout`, `docql.ErrNilContext`,
-  `docql.ErrNoInstruction`, `docql.ErrNoFile`, `docql.ErrMissingFilename`.
+  `docql.ErrInvalidAPIKey`, `docql.ErrInvalidAPIURL`,
+  `docql.ErrInvalidTimeout`, `docql.ErrNilClient`, `docql.ErrNilContext`,
+  `docql.ErrNoInstruction`, `docql.ErrNoFile`, `docql.ErrMissingFilename`,
+  `docql.ErrInvalidIdempotencyKey`, `docql.ErrNoJobID`,
+  `docql.ErrIdempotencyKeyOnQuery`.
 
 Every reason below is exported as a `docql.Reason…` constant
 (`invalid_api_key` is `docql.ReasonInvalidAPIKey`):
