@@ -25,6 +25,7 @@ func parseJob(status int, h http.Header, body []byte, apiKey, idemKey string) (*
 			RequestID: sanitizeServerString(h.Get("X-Request-Id"), apiKey, 0),
 			Message:   message,
 			Body:      scrubAndTruncate(body, apiKey),
+			Metadata:  map[string]any{},
 		}
 	}
 

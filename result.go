@@ -41,6 +41,7 @@ func parseResult(status int, h http.Header, body []byte, key string) (*QueryResu
 			RequestID: sanitizeServerString(h.Get("X-Request-Id"), key, 0),
 			Message:   message,
 			Body:      scrubAndTruncate(body, key),
+			Metadata:  map[string]any{},
 		}
 	}
 

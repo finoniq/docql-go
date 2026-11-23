@@ -356,6 +356,7 @@ func (c *Client) Wait(ctx context.Context, jobID string, opts ...WaitOption) (*J
 					Message:   "unexpected response: failed job without an error object",
 					Body:      scrubAndTruncate(body, c.cfg.apiKey),
 					JobID:     jobID,
+					Metadata:  map[string]any{},
 				}
 			}
 			backoff = retryAfterFloor // queued, running or unknown (D-09)
