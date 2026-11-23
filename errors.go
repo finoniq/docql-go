@@ -94,6 +94,16 @@ type Error struct {
 	// sent, so the caller can retry safely with the same key (D-08); "" for
 	// every other call. It is never part of Error().
 	IdempotencyKey string
+	// Metadata is the server's raw metadata object of the error body, for
+	// every reason: for spreadsheet_too_large it holds the measured value
+	// under its axis key (cells, runes, estimated_output_tokens or bytes)
+	// plus limit, reason and request_id. Numbers stay json.Number, so
+	// integers are exact (Int64 reads them back without rounding). It is
+	// parsed from the whole bounded body before Body is cut, every map key
+	// and string value has the API key replaced with ***, and it is never
+	// nil: an empty map when the body carries no metadata object. It is
+	// never part of Error().
+	Metadata map[string]any
 }
 
 // Error renders one of two string forms (D-09): the envelope form
@@ -205,6 +215,30 @@ func scrubAndTruncate(b []byte, key string) string {
 	return string(runes)
 }
 
+// scrubMetadata returns v with the key replaced by *** in every string value
+// and every map key, recursively through objects and arrays; json.Number,
+// booleans and nil pass through unchanged.
+func scrubMetadata(v any, key string) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[scrub(k, key)] = scrubMetadata(val, key)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = scrubMetadata(val, key)
+		}
+		return out
+	case string:
+		return scrub(t, key)
+	default:
+		return v
+	}
+}
+
 // sanitizeServerString makes a server-controlled string safe to store on an
 // error or result and to print in Error() (12-REVIEW WR-01): invalid UTF-8
 // becomes U+FFFD, every control character (CR and LF included) becomes a
@@ -275,13 +309,20 @@ func isASCIIDigits(s string) bool {
 // with a string reason. No stored string (Body, Message, Reason, RequestID)
 // ever contains the API key, even when the server echoes it back, and Reason,
 // RequestID and Message carry no control characters (12-REVIEW WR-01).
+// Metadata is filled from the body's metadata object whenever it is one,
+// for every reason and also without a string reason (D-06, D-12), from the
+// whole bounded body before Body is cut.
 func decodeError(status int, h http.Header, body []byte, key string) *Error {
 	e := &Error{
 		Status:    status,
 		Retryable: status == 429 || status == 503,
+		Metadata:  map[string]any{},
 	}
 	var doc map[string]json.RawMessage
 	if json.Unmarshal(body, &doc) == nil && doc != nil {
+		if raw := doc["metadata"]; isJSONObject(raw) {
+			e.Metadata = scrubMetadata(jsonObject(raw), key).(map[string]any)
+		}
 		var md map[string]json.RawMessage
 		if json.Unmarshal(doc["metadata"], &md) == nil && md != nil {
 			var reason *string

@@ -82,6 +82,24 @@ jobs:
             exit 1
           fi
           echo "contract-cases: $pass_count/$WANT case subtests and $n/$WANT_JOBS job case subtests PASS, no FAIL/SKIP"
+      - name: every sheet case ran and passed (SSDK exact-count gate)
+        # Kit v5: every sheet case runs once per route (sync and jobs) as its own
+        # TestContractSheetCases/<id>@<route> subtest. A silently skipped run must
+        # fail: the PASS lines must equal the kit's total of routes over all cases.
+        shell: bash
+        run: |
+          WANT=$(jq '[.cases[] | .routes | length] | add // 0' contract/sheet-cases.json)
+          ran=$(grep -cE '^    --- PASS: TestContractSheetCases/' "$RUNNER_TEMP/contract.log" || true)
+          bad=$(grep -cE -- '--- (FAIL|SKIP): TestContractSheetCases' "$RUNNER_TEMP/contract.log" || true)
+          echo "SHEET_CASES_RAN $ran (want $WANT)"
+          if [ "$bad" -ne 0 ]; then
+            echo "TestContractSheetCases has $bad FAIL/SKIP lines" >&2
+            exit 1
+          fi
+          if [ "$WANT" -eq 0 ] || [ "$ran" -ne "$WANT" ]; then
+            echo "expected $WANT TestContractSheetCases PASS lines, saw $ran" >&2
+            exit 1
+          fi
       - name: README quickstart
         run: scripts/stub-up.sh --run scripts/run-readme.sh
       - name: README jobs example

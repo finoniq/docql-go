@@ -155,7 +155,8 @@ func goldenFileBase64(t *testing.T, id string) []byte {
 
 // Kit integrity (GO-05): before any contract case runs, the stub must serve
 // exactly the vendored kit. For each kit file (sdk-cases.json at
-// GET /__stub/sdk-cases, job-cases.json at GET /__stub/job-cases) three sha256
+// GET /__stub/sdk-cases, job-cases.json at GET /__stub/job-cases,
+// sheet-cases.json at GET /__stub/sdk-contract/sheet-cases.json) three sha256
 // values must agree: the bytes the stub serves, the file's entry in the
 // vendored manifest, and the vendored file itself. A mismatch — or a non-200,
 // or an unreachable stub — fails every contract test in this binary. The
@@ -170,6 +171,7 @@ var (
 var kitRoutes = []struct{ file, route string }{
 	{"sdk-cases.json", "/__stub/sdk-cases"},
 	{"job-cases.json", "/__stub/job-cases"},
+	{"sheet-cases.json", "/__stub/sdk-contract/sheet-cases.json"},
 }
 
 func checkKit(t *testing.T, base string) {
