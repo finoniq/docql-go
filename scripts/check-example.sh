@@ -8,20 +8,22 @@
 # matching example function from example_test.go, strips leading and trailing
 # whitespace from every line, and compares:
 #
-#   quickstart  ExampleClient_QueryDocument
-#   jobs        ExampleClient_SubmitDocument
+#   quickstart   ExampleClient_QueryDocument
+#   jobs         ExampleClient_SubmitDocument
+#   spreadsheet  ExampleClient_QueryDocument_spreadsheet
 #
-# CI runs this with no argument, which checks both blocks, so no pkg.go.dev
+# CI runs this with no argument, which checks every block, so no pkg.go.dev
 # example can drift from the README.
 #
 # Usage:
-#   scripts/check-example.sh [--block quickstart|jobs] [--readme PATH] [--example PATH]
+#   scripts/check-example.sh [--block quickstart|jobs|spreadsheet] [--readme PATH] [--example PATH]
 #
 # The quickstart prints EXAMPLE_MATCHES_README on equality, EXAMPLE_DIFFERS
 # with a unified diff on drift, and EXAMPLE_MISSING when the markers are
 # unusable or either function is absent; the jobs block prints the same lines
-# prefixed with JOBS_ (JOBS_EXAMPLE_MATCHES_README, ...). Exits 0 only when
-# every checked block matches, 1 otherwise, 2 on a usage error.
+# prefixed with JOBS_ (JOBS_EXAMPLE_MATCHES_README, ...) and the spreadsheet
+# block with SPREADSHEET_. Exits 0 only when every checked block matches, 1
+# otherwise, 2 on a usage error.
 
 set -euo pipefail
 
@@ -30,9 +32,9 @@ ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 README="$ROOT/README.md"
 EXAMPLE="$ROOT/example_test.go"
-BLOCKS="quickstart jobs"
+BLOCKS="quickstart jobs spreadsheet"
 usage() {
-  echo "usage: scripts/check-example.sh [--block quickstart|jobs] [--readme PATH] [--example PATH]" >&2
+  echo "usage: scripts/check-example.sh [--block quickstart|jobs|spreadsheet] [--readme PATH] [--example PATH]" >&2
   exit 2
 }
 while [ "$#" -gt 0 ]; do
@@ -40,7 +42,7 @@ while [ "$#" -gt 0 ]; do
     --block)
       [ "$#" -ge 2 ] || { echo "--block needs a name" >&2; exit 2; }
       case "$2" in
-        quickstart|jobs) BLOCKS=$2 ;;
+        quickstart|jobs|spreadsheet) BLOCKS=$2 ;;
         *) usage ;;
       esac
       shift 2
@@ -131,6 +133,7 @@ for block in $BLOCKS; do
   case "$block" in
     quickstart) check_block quickstart ExampleClient_QueryDocument "" || rc=1 ;;
     jobs) check_block jobs ExampleClient_SubmitDocument "JOBS_" || rc=1 ;;
+    spreadsheet) check_block spreadsheet ExampleClient_QueryDocument_spreadsheet "SPREADSHEET_" || rc=1 ;;
   esac
 done
 exit "$rc"

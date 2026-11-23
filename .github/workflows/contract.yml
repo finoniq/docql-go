@@ -4,7 +4,8 @@
 # the full shared SDK case list against the same pinned stub, gated on the vendored
 # PASS count and refusing any FAIL or SKIP, plus the README quickstart (contract-cases),
 # and since v0.2 every stub-target kit v3 job case, gated on the jq count (JSDK-04),
-# and the README jobs example, and it is reusable so release.yml runs it on a tag.
+# the README jobs example and, since v0.3, the README spreadsheet example, and it is
+# reusable so release.yml runs it on a tag.
 name: contract
 
 on:
@@ -104,3 +105,5 @@ jobs:
         run: scripts/stub-up.sh --run scripts/run-readme.sh
       - name: README jobs example
         run: scripts/stub-up.sh --run scripts/run-readme.sh --block jobs
+      - name: README spreadsheet example
+        run: scripts/stub-up.sh --run scripts/run-readme.sh --block spreadsheet

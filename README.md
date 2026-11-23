@@ -204,6 +204,77 @@ Never turn certificate verification off.
   chunked upload may answer `503` instead of `413`. The API rejects files
   over 25 MiB, and a transport failure on a larger file carries a size hint
   in its message.
+- A CSV is recognised only by a file name that ends in `.csv`, in any letter
+  case (`sales.csv`, `SALES.CSV`). When you send `docql.FileBytes` or a
+  `docql.FileReader`, pass the name with `docql.WithFilename` or the `name`
+  argument. The name is sent exactly as given and never trimmed, so `"a.csv "`
+  with a trailing space is refused with `unsupported_file_type`.
+
+## Spreadsheets
+
+`.xlsx`, `.ods` and `.csv` files are sent like any other file. A refused
+spreadsheet returns a `*docql.Error` whose `Metadata` is the server's raw
+refusal object, with every number as a `json.Number`. For
+`spreadsheet_too_large` it holds the measured value under its axis key
+(`cells`, `runes`, `estimated_output_tokens` or `bytes`), plus `limit`,
+`reason` and `request_id`. Look the axis up by name, not by ranging over the
+map:
+
+<!-- docql:spreadsheet:start -->
+```go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+
+	docql "github.com/finoniq/docql-go"
+)
+
+func main() {
+	client, err := docql.NewClient() // reads DOCQL_API_KEY and DOCQL_API_URL
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	data, err := os.ReadFile("sales.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	res, err := client.QueryDocument(
+		context.Background(),
+		docql.FileBytes(data, ""),
+		docql.Query("{ region total_sales }"),
+		docql.WithFilename("sales.csv"), // a CSV is recognised by its .csv name
+	)
+	var apiErr *docql.Error
+	if errors.As(err, &apiErr) && apiErr.Reason == docql.ReasonSpreadsheetTooLarge {
+		limit, _ := apiErr.Metadata["limit"].(json.Number)
+		for _, axis := range []string{"cells", "runes", "estimated_output_tokens", "bytes"} {
+			if value, ok := apiErr.Metadata[axis].(json.Number); ok {
+				fmt.Printf("too large: %s=%s limit=%s\n", axis, value, limit)
+				return
+			}
+		}
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if res.PageCount != nil {
+		fmt.Println("pages:", *res.PageCount)
+	}
+}
+```
+<!-- docql:spreadsheet:end -->
+
+The same code is `ExampleClient_QueryDocument_spreadsheet` on
+[pkg.go.dev](https://pkg.go.dev/github.com/finoniq/docql-go).
 
 ## Modes
 
@@ -217,7 +288,8 @@ Three kinds:
 
 - `*docql.Error` (match with `errors.As`) — the server answered non-2xx. It
   carries `Status`, `Reason`, `RequestID`, `RetryAfter`, `Retryable`,
-  `Message` and a key-scrubbed `Body` truncated to 2048 characters.
+  `Message`, a key-scrubbed `Body` truncated to 2048 characters and
+  `Metadata`, the key-scrubbed refusal metadata (never nil).
 - `*docql.ConnectionError` (match with `errors.As`) — no usable answer
   arrived (connect, TLS, reset, short read, timeout). `Timeout()` reports a
   deadline expiry, and `errors.Is` keeps working for

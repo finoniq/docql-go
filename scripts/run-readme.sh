@@ -2,17 +2,19 @@
 # scripts/run-readme.sh — run a README example against the pinned stub.
 #
 # Extracts the single fenced Go block between the docql:<block> markers of
-# README.md (--block quickstart, the default, or --block jobs), writes it as a
-# package main program into a fresh temporary directory next to invoice.pdf
-# (the golden kit's ascii-query document), and runs it there with `go run`,
-# with DOCQL_API_KEY and DOCQL_API_URL pointing at the stub. CI and the
-# release verify job run this script unchanged.
+# README.md (--block quickstart, the default, --block jobs or --block
+# spreadsheet), writes it as a package main program into a fresh temporary
+# directory next to invoice.pdf (the golden kit's ascii-query document) and
+# sales.csv (a copy of the kit's contract/sheets/plain.csv), and runs it there
+# with `go run`, with DOCQL_API_KEY and DOCQL_API_URL pointing at the stub.
+# CI and the release verify job run this script unchanged.
 #
 # Usage:
 #   DOCQL_STUB_URL=http://127.0.0.1:18081 scripts/run-readme.sh
 #   DOCQL_STUB_URL=... scripts/run-readme.sh --block jobs
+#   DOCQL_STUB_URL=... scripts/run-readme.sh --block spreadsheet
 #   DOCQL_STUB_URL=... scripts/run-readme.sh --readme PATH
-#   DOCQL_STUB_URL=... scripts/run-readme.sh --module-version VERSION [--block jobs]
+#   DOCQL_STUB_URL=... scripts/run-readme.sh --module-version VERSION [--block jobs|spreadsheet]
 #
 # Local mode (default) builds against this checkout with GOPROXY=off and a
 # replace directive, proving the quickstart needs no third-party module and
@@ -22,9 +24,10 @@
 # module's own go.mod to carry no require/toolchain line (NO_REQUIRE_OK) and
 # then runs the program — the release dry run for the README examples.
 #
-# Prints README_QUICKSTART_OK (README_JOBS_OK for --block jobs) on success and
-# README_QUICKSTART_MISSING (README_JOBS_MISSING) when a marker or the fenced
-# block is unusable. Exits non-zero on any failure.
+# Prints README_QUICKSTART_OK (README_JOBS_OK for --block jobs,
+# README_SPREADSHEET_OK for --block spreadsheet) on success and
+# README_QUICKSTART_MISSING (README_JOBS_MISSING, README_SPREADSHEET_MISSING)
+# when a marker or the fenced block is unusable. Exits non-zero on any failure.
 
 set -euo pipefail
 
@@ -35,7 +38,7 @@ README="$ROOT/README.md"
 MODULE_VERSION=""
 BLOCK=quickstart
 usage() {
-  echo "usage: scripts/run-readme.sh [--block quickstart|jobs] [--readme PATH] [--module-version VERSION]" >&2
+  echo "usage: scripts/run-readme.sh [--block quickstart|jobs|spreadsheet] [--readme PATH] [--module-version VERSION]" >&2
   exit 2
 }
 while [ "$#" -gt 0 ]; do
@@ -43,7 +46,7 @@ while [ "$#" -gt 0 ]; do
     --block)
       [ "$#" -ge 2 ] || { echo "--block needs a name" >&2; exit 2; }
       case "$2" in
-        quickstart|jobs) BLOCK=$2 ;;
+        quickstart|jobs|spreadsheet) BLOCK=$2 ;;
         *) usage ;;
       esac
       shift 2
@@ -107,6 +110,9 @@ sed -n "$((open + 1)),$((close - 1))p" "$README" > "$TMP/main.go"
 # vendored case list, so the run needs no real credential.
 jq -r '.cases[] | select(.id == "ascii-query") | .fileBase64' "$ROOT/contract/golden.json" | base64 -d > "$TMP/invoice.pdf"
 API_KEY=$(jq -r '.keys.valid' "$ROOT/contract/sdk-cases.json")
+# sales.csv is the sheet kit's plain.csv, copied into this run's own temporary
+# directory so two runs never share the file.
+cp "$ROOT/contract/sheets/plain.csv" "$TMP/sales.csv"
 
 export GOFLAGS=-mod=mod
 if [ -n "$MODULE_VERSION" ]; then
