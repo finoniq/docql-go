@@ -1,20 +1,23 @@
 package docql
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 )
 
-// TestConstantsReasons pins the D-08/D-09 reason set: exactly 22 distinct
-// values, equal to the union of the non-null reasons of both vendored kit
-// files — sdk-cases.json (cases, decodeCases) and job-cases.json (the reason
-// table, decodeCases, every job step's reason and embeddedReason, and every
-// wait case's reason).
+// TestConstantsReasons pins the D-08/D-09/D-12 reason set: exactly 25
+// distinct values, equal to the union of the non-null reasons of the three
+// vendored kit files — sdk-cases.json (cases, decodeCases), job-cases.json
+// (the reason table, decodeCases, every job step's reason and embeddedReason,
+// and every wait case's reason) and sheet-cases.json (every case's reason and
+// every fixture answer's reason).
 func TestConstantsReasons(t *testing.T) {
 	reasons := []string{
 		ReasonInvalidAPIKey,
@@ -40,15 +43,15 @@ func TestConstantsReasons(t *testing.T) {
 		ReasonIdempotencyInProgress,
 		ReasonJobInterrupted,
 	}
-	if len(reasons) != 22 {
-		t.Fatalf("the constant slice has %d entries, want 22", len(reasons))
+	if len(reasons) != 25 {
+		t.Fatalf("the constant slice has %d entries, want 25", len(reasons))
 	}
 	got := make(map[string]struct{}, len(reasons))
 	for _, r := range reasons {
 		got[r] = struct{}{}
 	}
-	if len(got) != 22 {
-		t.Fatalf("the constants carry %d distinct values, want 22", len(got))
+	if len(got) != 25 {
+		t.Fatalf("the constants carry %d distinct values, want 25", len(got))
 	}
 
 	want := make(map[string]struct{})
@@ -83,8 +86,15 @@ func TestConstantsReasons(t *testing.T) {
 	for _, c := range jobs.WaitCases {
 		add(c.Expect.Reason)
 	}
-	if len(want) != 22 {
-		t.Fatalf("the vendored kit names %d distinct non-null reasons, want 22", len(want))
+	sheets := loadSheetReasons(t)
+	for _, c := range sheets.Cases {
+		add(c.Expect.Reason)
+	}
+	for _, f := range sheets.Fixtures {
+		add(f.Answer.Reason)
+	}
+	if len(want) != 25 {
+		t.Fatalf("the vendored kit names %d distinct non-null reasons, want 25", len(want))
 	}
 	for r := range got {
 		if _, ok := want[r]; !ok {
@@ -96,6 +106,35 @@ func TestConstantsReasons(t *testing.T) {
 			t.Errorf("vendored reason %q has no exported constant", r)
 		}
 	}
+}
+
+// sheetReasonsFile is the part of contract/sheet-cases.json (kit v5) the
+// reason test reads: every case's expected reason and every fixture answer's
+// reason.
+type sheetReasonsFile struct {
+	Cases []struct {
+		Expect struct {
+			Reason *string `json:"reason"`
+		} `json:"expect"`
+	} `json:"cases"`
+	Fixtures map[string]struct {
+		Answer struct {
+			Reason *string `json:"reason"`
+		} `json:"answer"`
+	} `json:"fixtures"`
+}
+
+func loadSheetReasons(t *testing.T) *sheetReasonsFile {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("contract", "sheet-cases.json"))
+	if err != nil {
+		t.Fatalf("read contract/sheet-cases.json: %v", err)
+	}
+	var kit sheetReasonsFile
+	if err := json.Unmarshal(raw, &kit); err != nil {
+		t.Fatalf("decode contract/sheet-cases.json: %v", err)
+	}
+	return &kit
 }
 
 // TestSurfaceExported freezes the one-way public surface before the owner
@@ -114,6 +153,7 @@ func TestSurfaceExported(t *testing.T) {
 		"ReasonConcurrencyLimitExceeded", "ReasonRateLimitExceeded",
 		"ReasonJobNotFound", "ReasonJobExpired", "ReasonQueueFull",
 		"ReasonIdempotencyKeyConflict", "ReasonIdempotencyInProgress", "ReasonJobInterrupted",
+		"ReasonDocumentTooComplex", "ReasonSpreadsheetTooLarge", "ReasonTooManyPages",
 		"JobStatusQueued", "JobStatusRunning", "JobStatusSucceeded", "JobStatusFailed", "JobStatusCancelled",
 	}
 	wantVariables := []string{
@@ -141,7 +181,7 @@ func TestSurfaceExported(t *testing.T) {
 	wantFields := map[string][]string{
 		"QueryResult": {"Data", "RequestID", "PageCount", "PagesOCR", "Metadata"},
 		"Error": {"Status", "Reason", "RequestID", "RetryAfter", "Retryable", "Message", "Body",
-			"JobID", "IdempotencyKey"},
+			"JobID", "IdempotencyKey", "Metadata"},
 		"ConnectionError": {"IdempotencyKey"},
 		"Client":          {},
 		"Instruction":     {},
