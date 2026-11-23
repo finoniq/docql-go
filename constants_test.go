@@ -42,6 +42,9 @@ func TestConstantsReasons(t *testing.T) {
 		ReasonIdempotencyKeyConflict,
 		ReasonIdempotencyInProgress,
 		ReasonJobInterrupted,
+		ReasonDocumentTooComplex,
+		ReasonSpreadsheetTooLarge,
+		ReasonTooManyPages,
 	}
 	if len(reasons) != 25 {
 		t.Fatalf("the constant slice has %d entries, want 25", len(reasons))

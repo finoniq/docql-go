@@ -39,9 +39,10 @@ const (
 	snippetMaxChars = 200
 )
 
-// The DocQL reasons (D-08, D-09): exactly the 22 non-null reasons of the
-// vendored contract kit, contract/sdk-cases.json (the sync stub and gateway
-// errors) plus contract/job-cases.json (the job errors). Error.Reason carries
+// The DocQL reasons (D-08, D-09, D-12): exactly the 25 non-null reasons of
+// the vendored contract kit, contract/sdk-cases.json (the sync stub and
+// gateway errors), contract/job-cases.json (the job errors) and
+// contract/sheet-cases.json (the spreadsheet refusals). Error.Reason carries
 // these values; classification is by status, never by body shape. Adding
 // constants later is backward compatible, removing them is not.
 const (
@@ -94,6 +95,17 @@ const (
 	// ReasonJobInterrupted is the 503 reason carried only inside a failed job's
 	// error, for a job interrupted before it could complete.
 	ReasonJobInterrupted = "job_interrupted"
+	// ReasonDocumentTooComplex is the 422 reason for a document whose
+	// structure the engine refuses to process, such as a workbook with a
+	// DOCTYPE declaration.
+	ReasonDocumentTooComplex = "document_too_complex"
+	// ReasonSpreadsheetTooLarge is the 422 reason for a spreadsheet over one
+	// of its size limits; Error.Metadata holds the measured value under its
+	// axis key (cells, runes, estimated_output_tokens or bytes) and limit.
+	ReasonSpreadsheetTooLarge = "spreadsheet_too_large"
+	// ReasonTooManyPages is the 422 reason for a document with more pages
+	// than allowed; Error.Metadata holds pages and limit.
+	ReasonTooManyPages = "too_many_pages"
 )
 
 // The job routes and the wait pacing (JSDK-01). The wait numbers copy the
