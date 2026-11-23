@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-23
+
+### Added
+
+- `Error.Metadata`: the server's raw refusal metadata object of an error
+  answer, with every number as a `json.Number` (exact for any int64) and the
+  API key scrubbed from keys and string values. It is never nil: a body
+  without a metadata object gives an empty map. `Error()` is unchanged.
+- Three reason constants: `ReasonSpreadsheetTooLarge`,
+  `ReasonDocumentTooComplex` and `ReasonTooManyPages` (25 in all).
+- A README and pkg.go.dev spreadsheet example
+  (`ExampleClient_QueryDocument_spreadsheet`): it sends a CSV by an explicit
+  `.csv` name and reads the axis, its value and the limit of a
+  `spreadsheet_too_large` refusal from `Error.Metadata`.
+- README § Files states the CSV file-name rule: a CSV is recognised only by
+  a name ending in `.csv` in any letter case, `FileBytes` and `FileReader`
+  need the name, and the name is sent verbatim (`"a.csv "` is refused).
+
+### Changed
+
+- Contract kit v5 is vendored (stub pin `sha-1a3c3ce`); the contract suite
+  runs all 26 spreadsheet cases on the sync and the jobs route.
+- README § Errors lists all 12 validation sentinels, and the install line
+  and § Versioning name v0.3.
+
+The module path stays `github.com/finoniq/docql-go` and `go.mod` still says
+`go 1.26` with no dependency. No breaking changes: code written against
+v0.2.1 builds and runs unchanged.
+
 ## [0.2.1] - 2026-10-26
 
 ### Fixed
@@ -120,6 +149,7 @@ No breaking changes: code written against v0.1.0 builds and runs unchanged.
 - `Mode` with `ModeFast` / `ModeStandard`, the fourteen `Reason…` constants,
   and the exported `Version`.
 
+[0.3.0]: https://github.com/finoniq/docql-go/tree/v0.3.0
 [0.2.1]: https://github.com/finoniq/docql-go/tree/v0.2.1
 [0.2.0]: https://github.com/finoniq/docql-go/tree/v0.2.0
 [0.1.0]: https://github.com/finoniq/docql-go/tree/v0.1.0

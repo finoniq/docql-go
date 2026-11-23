@@ -7,7 +7,7 @@ standard library only, so adding it cannot add a single dependency to yours.
 ## Install
 
 ```sh
-go get github.com/finoniq/docql-go@v0.2.1
+go get github.com/finoniq/docql-go@v0.3.0
 ```
 
 ```go
@@ -371,7 +371,7 @@ not processed.
 ## Versioning
 
 The SDK follows [Semantic Versioning](https://semver.org/). While the major
-version is 0, a minor release may change the API; pin a `v0.2.x` version
+version is 0, a minor release may change the API; pin a `v0.3.x` version
 until 1.0. A bad release is never re-tagged — it is withdrawn with a
 `retract` directive in a higher version.
 
