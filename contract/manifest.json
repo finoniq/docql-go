@@ -6,7 +6,23 @@
     "golden/mode-standard.bin": "29b17fa88165fc581fb5a1b023ddca91bf7ee12ac1abb989c2c2db0be3a2ee27",
     "golden/prompt.bin": "c0add1a6a341fbb20483e3d6424b04a526474b3e3f0b524fb7e1912c732fa8d0",
     "golden/thai-query.bin": "ab605d2ab5e2b87a209e30dd53f9e31390ede96dd010e80955a616bfa232710f",
-    "job-cases.json": "5d9883d010264b54591673abdc46c33bf0ca7ca74493bd42c5f891926e7f5003",
-    "sdk-cases.json": "c639726427052b1c6b388794fb324078cfe4149ac1994f1d86e5b87f205a1938"
+    "job-cases.json": "eac4b4810476fe43d1c60c40dd72c7bfd6e531a166af79fe5b9b955c737af8e5",
+    "sdk-cases.json": "c639726427052b1c6b388794fb324078cfe4149ac1994f1d86e5b87f205a1938",
+    "sheet-cases.json": "8626764b63e0ea70f659f6888fc47d8e9737270f3be531e340508c24493c31e2",
+    "sheets/bad-workbook-xml.xlsx": "053cb3c81e82096a84139004ed35da4f5429390537edf9c1be5867a1f7abcc2a",
+    "sheets/base-3sheets.xlsx": "1fc29e3c9be84789c6bad382ab748a87695adaa50efd4ab437e1843951da81a9",
+    "sheets/base-multi.ods": "4e980f770b7f0d7d7fbadd5d54e4b4fce6cb89a06eb6f6bd054965d2d4fbabe1",
+    "sheets/bmi-header.csv": "e4a8733a1c8124ad022a9e6b2fb3923157eafae8e3f43bfaba94bddc9fec61fe",
+    "sheets/corrupt-zip.xlsx": "47062f7d2daf0a98722bfbc4e8a05968159c5bba7909a0b748d34238b4cf29c5",
+    "sheets/doctype-workbook.xlsx": "b93a8c7e87532ec2e72a7095a2f3ee0fd57324f39b70bbf88a0c828884185f58",
+    "sheets/encrypted.xlsx": "3c07e2659f1437a051bfcbb60caa1dbd1355ac81c8fa39dee1a39fb329f99f5f",
+    "sheets/legacy.xls": "a899fb4496afa7230c378d5be03cf3461990994993110fd2dad3257111081275",
+    "sheets/macro.xlsm": "178dc6795d55ab66b59f86151b57e2ee2e9e089c9a35a803dcde8add91f21b74",
+    "sheets/plain.csv": "714c99813c979c677e16f1a7a850f2eccb1d05c0aa3bdb18ed14efc975e9344b",
+    "sheets/thai-sep-semicolon.csv": "d90d7b862b9acfcb81c91031f80ef2ced218000660a78089b8b7e0fcf204ba74",
+    "sheets/thai-utf16le-bom.csv": "e5d13c12e94b128e6e22e04a20a6c1a4c5d4a53c0ad42649ecf1d614304cc3d1",
+    "sheets/thai-utf8-bom.csv": "187f9f9988aa377a04d505b8f8c0785770b7f07e59cf6bcf8116e69b2467e44d",
+    "sheets/thai-utf8.csv": "91f92bc0b95b1657c57b50967120a6f748364bdaf8b116cd2a39ad1b3ffb2419",
+    "sheets/thai-win874.csv": "dace7fb02f947a6af6a4d52bfb7d4baadce1b00f0e25945adf57d778db455673"
   }
 }

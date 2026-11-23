@@ -1,0 +1,679 @@
+{
+  "version": 5,
+  "contract": "docql-console/stub-v1",
+  "recipe": "job-cases.json",
+  "fixtures": {
+    "sheets/bad-workbook-xml.xlsx": {
+      "answer": {
+        "status": 422,
+        "reason": "corrupted_file"
+      }
+    },
+    "sheets/base-3sheets.xlsx": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "page_count": 3
+      }
+    },
+    "sheets/base-multi.ods": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "application/vnd.oasis.opendocument.spreadsheet",
+        "page_count": 3
+      }
+    },
+    "sheets/bmi-header.csv": {
+      "answer": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    "sheets/corrupt-zip.xlsx": {
+      "answer": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    "sheets/doctype-workbook.xlsx": {
+      "answer": {
+        "status": 422,
+        "reason": "document_too_complex"
+      }
+    },
+    "sheets/encrypted.xlsx": {
+      "answer": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    "sheets/legacy.xls": {
+      "answer": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    "sheets/macro.xlsm": {
+      "answer": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    "sheets/plain.csv": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1
+      }
+    },
+    "sheets/thai-sep-semicolon.csv": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1
+      }
+    },
+    "sheets/thai-utf16le-bom.csv": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1
+      }
+    },
+    "sheets/thai-utf8-bom.csv": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1
+      }
+    },
+    "sheets/thai-utf8.csv": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1
+      }
+    },
+    "sheets/thai-win874.csv": {
+      "answer": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "sheet-xlsx",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "An .xlsx workbook is extracted with one page per worksheet, hidden and very hidden sheets included; pages_ocr is 0 and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "base-3sheets.xlsx",
+          "fixture": "sheets/base-3sheets.xlsx"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "page_count": 3,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-ods",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "An OpenDocument spreadsheet (.ods) is extracted with one page per sheet; pages_ocr is 0 and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "base-multi.ods",
+          "fixture": "sheets/base-multi.ods"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "application/vnd.oasis.opendocument.spreadsheet",
+        "page_count": 3,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "Plain text uploaded under a name that ends in .csv is a spreadsheet of one page: it is extracted and reports text/csv, page_count 1 and pages_ocr 0. The real engine charges it.",
+      "request": {
+        "file": {
+          "name": "plain.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv-upper",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "The .csv extension is matched without regard to case: the same bytes uploaded as PLAIN.CSV are extracted as one page of text/csv, and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "PLAIN.CSV",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv-thai-utf8",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A Thai CSV in UTF-8 without a BOM is read as text: it is extracted as one page of text/csv with pages_ocr 0, and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "thai-utf8.csv",
+          "fixture": "sheets/thai-utf8.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv-thai-utf8-bom",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A Thai CSV in UTF-8 with a BOM is read as text: it is extracted as one page of text/csv with pages_ocr 0, and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "thai-utf8-bom.csv",
+          "fixture": "sheets/thai-utf8-bom.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv-thai-win874",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A Thai CSV in Windows-874 (TIS-620) is read as text: it is extracted as one page of text/csv with pages_ocr 0, and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "thai-win874.csv",
+          "fixture": "sheets/thai-win874.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv-thai-utf16le-bom",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A Thai CSV in UTF-16LE with a BOM is read as text: it is extracted as one page of text/csv with pages_ocr 0, and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "thai-utf16le-bom.csv",
+          "fixture": "sheets/thai-utf16le-bom.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "sheet-csv-thai-sep",
+      "target": "both",
+      "paid": true,
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A Thai CSV with semicolon separators is read as text: it is extracted as one page of text/csv with pages_ocr 0, and the real engine charges it.",
+      "request": {
+        "file": {
+          "name": "thai-sep-semicolon.csv",
+          "fixture": "sheets/thai-sep-semicolon.csv"
+        },
+        "query": "{ items[] { item quantity } }"
+      },
+      "expect": {
+        "status": 200,
+        "file_mimetype": "text/csv",
+        "page_count": 1,
+        "pages_ocr": 0
+      }
+    },
+    {
+      "id": "csv-name-none",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A CSV's bytes uploaded under a name with no extension are not a spreadsheet: the file is refused as unsupported_file_type and nothing is extracted.",
+      "request": {
+        "file": {
+          "name": "plain",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "csv-name-txt",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "Only the last extension counts: a CSV's bytes uploaded as a.csv.txt are refused as unsupported_file_type and nothing is extracted.",
+      "request": {
+        "file": {
+          "name": "a.csv.txt",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "csv-name-space",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A CSV's bytes uploaded as \"a.csv \" (a trailing space after .csv): the name is not a CSV name, so the file is refused as unsupported_file_type and nothing is extracted. Send the upload name byte for byte; never trim it.",
+      "request": {
+        "file": {
+          "name": "a.csv ",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "csv-empty",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A zero-byte upload named empty.csv is not a spreadsheet: it is refused as unsupported_file_type and nothing is extracted.",
+      "request": {
+        "file": {
+          "name": "empty.csv",
+          "base64": ""
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "csv-bmi",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A file named .csv whose bytes start with BM (here a BMI column header) is sniffed as a BMP image, not as text, and is refused as unsupported_file_type.",
+      "request": {
+        "file": {
+          "name": "bmi-header.csv",
+          "fixture": "sheets/bmi-header.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "xls-legacy",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A legacy binary Excel workbook (.xls) is not supported: it is refused as unsupported_file_type.",
+      "request": {
+        "file": {
+          "name": "legacy.xls",
+          "fixture": "sheets/legacy.xls"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "xlsm-macro",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A macro-enabled workbook (.xlsm) is not supported: it is refused as unsupported_file_type.",
+      "request": {
+        "file": {
+          "name": "macro.xlsm",
+          "fixture": "sheets/macro.xlsm"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "zip-corrupt",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A file named .xlsx whose bytes are not a readable zip archive is refused as unsupported_file_type.",
+      "request": {
+        "file": {
+          "name": "corrupt-zip.xlsx",
+          "fixture": "sheets/corrupt-zip.xlsx"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "xlsx-encrypted",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A password-protected .xlsx is not a zip archive the engine can open: it is refused as unsupported_file_type.",
+      "request": {
+        "file": {
+          "name": "encrypted.xlsx",
+          "fixture": "sheets/encrypted.xlsx"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "unsupported_file_type"
+      }
+    },
+    {
+      "id": "xlsx-bad-workbook",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "An .xlsx whose zip is sound but whose workbook XML cannot be parsed is refused as corrupted_file.",
+      "request": {
+        "file": {
+          "name": "bad-workbook-xml.xlsx",
+          "fixture": "sheets/bad-workbook-xml.xlsx"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "corrupted_file"
+      }
+    },
+    {
+      "id": "xlsx-doctype",
+      "target": "both",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "An .xlsx whose workbook XML carries a DOCTYPE declaration is refused as document_too_complex.",
+      "request": {
+        "file": {
+          "name": "doctype-workbook.xlsx",
+          "fixture": "sheets/doctype-workbook.xlsx"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "document_too_complex"
+      }
+    },
+    {
+      "id": "toolarge-cells",
+      "target": "stub",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A spreadsheet with more cells than the limit is refused as spreadsheet_too_large, and metadata names the cells counted and the limit.",
+      "request": {
+        "file": {
+          "name": "toolarge-cells-558-557.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "spreadsheet_too_large",
+        "metadata": {
+          "cells": 558,
+          "limit": 557
+        }
+      }
+    },
+    {
+      "id": "toolarge-runes",
+      "target": "stub",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A spreadsheet with more characters (runes) than the limit is refused as spreadsheet_too_large, and metadata names the runes counted and the limit.",
+      "request": {
+        "file": {
+          "name": "toolarge-runes-1200001-1200000.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "spreadsheet_too_large",
+        "metadata": {
+          "limit": 1200000,
+          "runes": 1200001
+        }
+      }
+    },
+    {
+      "id": "toolarge-tokens",
+      "target": "stub",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A spreadsheet whose estimated output tokens pass the limit is refused as spreadsheet_too_large, and metadata names estimated_output_tokens and the limit.",
+      "request": {
+        "file": {
+          "name": "toolarge-tokens-9001-9000.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "spreadsheet_too_large",
+        "metadata": {
+          "estimated_output_tokens": 9001,
+          "limit": 9000
+        }
+      }
+    },
+    {
+      "id": "toolarge-bytes",
+      "target": "stub",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A spreadsheet whose size in bytes passes the limit is refused as spreadsheet_too_large, and metadata names the bytes and the limit.",
+      "request": {
+        "file": {
+          "name": "toolarge-bytes-5000001-5000000.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "spreadsheet_too_large",
+        "metadata": {
+          "bytes": 5000001,
+          "limit": 5000000
+        }
+      }
+    },
+    {
+      "id": "toolarge-standard",
+      "target": "stub",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "With mode standard a spreadsheet over a limit is refused the same way, as spreadsheet_too_large with the axis and the limit in metadata.",
+      "request": {
+        "file": {
+          "name": "toolarge-cells-558-557.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }",
+        "mode": "standard"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "spreadsheet_too_large",
+        "metadata": {
+          "cells": 558,
+          "limit": 557
+        }
+      }
+    },
+    {
+      "id": "toomany-pages",
+      "target": "stub",
+      "routes": [
+        "sync",
+        "jobs"
+      ],
+      "description": "A spreadsheet with more sheets than the page limit is refused as too_many_pages, and metadata names the pages and the limit.",
+      "request": {
+        "file": {
+          "name": "toomany-3-2.csv",
+          "fixture": "sheets/plain.csv"
+        },
+        "query": "{ title }"
+      },
+      "expect": {
+        "status": 422,
+        "reason": "too_many_pages",
+        "metadata": {
+          "limit": 2,
+          "pages": 3
+        }
+      }
+    }
+  ]
+}
