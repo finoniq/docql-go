@@ -148,6 +148,105 @@ The same code is `ExampleClient_SubmitDocument` on
 - `job.PagesDone` stays 0 while DocQL runs OCR, so show progress as
   indeterminate while a running job reports 0 pages done.
 
+## Webhooks
+
+DocQL signs every webhook delivery with your endpoint's secret, following the
+open Standard Webhooks spec. Verify each delivery with `docql.VerifyWebhook`
+before you trust it:
+
+- Read the raw request bytes before any JSON decoding, and pass `r.Header` as
+  it is. A body that was decoded and encoded again never verifies.
+- Pass the endpoint secret (`whsec_…`). During the 24 h rotation overlap, pass
+  both secrets in the slice: a delivery signed with either one verifies.
+- The helper does no replay detection. Store each `event.ID` and skip one you
+  have already seen: the id is the same across retries and resends.
+- `event.Type` is an open string. Compare it with `docql.EventJobSucceeded`,
+  `docql.EventJobFailed`, `docql.EventJobCancelled` or
+  `docql.EventWebhookTest`, and ignore a type you do not know. Compare
+  `event.Status` with the `docql.JobStatus…` constants
+  (`docql.JobStatusSucceeded` and the others).
+- `docql.WithWebhookTolerance(d)` (default 5 minutes) is the clock difference
+  allowed between DocQL and your receiver, either way.
+- A missing or malformed secret gives an error matching
+  `docql.ErrInvalidWebhookSecret`, and a tolerance of zero or less one
+  matching `docql.ErrInvalidWebhookTolerance` (match with `errors.Is`). These
+  are configuration errors, not refused deliveries.
+
+A refused delivery returns a `*docql.WebhookError` (match with `errors.As`),
+whose `Reason` is one of:
+
+- `missing_header`: a `webhook-id`, `webhook-timestamp` or `webhook-signature`
+  header is absent, empty, or repeated with different values
+- `invalid_timestamp`: `webhook-timestamp` is not 1 to 12 ASCII digits
+- `invalid_signature_header`: `webhook-signature` has no well-formed v1 signature
+- `signature_mismatch`: a wrong secret or a changed body
+- `timestamp_too_old`: the signature is valid but older than the tolerance;
+  check your receiver's clock
+- `timestamp_too_new`: the timestamp is further in the future than the tolerance
+- `invalid_payload`: the signed body is not a DocQL webhook event
+
+A receiver built on the standard library:
+
+<!-- docql:webhook:start -->
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+
+	docql "github.com/finoniq/docql-go"
+)
+
+func main() {
+	secret := os.Getenv("DOCQL_WEBHOOK_SECRET") // whsec_..., from the console
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+
+	http.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+		// The raw bytes, before any JSON decoding; at most 1 MiB.
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+			} else {
+				w.WriteHeader(http.StatusBadRequest)
+			}
+			return
+		}
+
+		event, err := docql.VerifyWebhook(body, r.Header, []string{secret})
+		var whErr *docql.WebhookError
+		if errors.As(err, &whErr) {
+			log.Printf("webhook refused: %s", whErr.Reason)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if err != nil { // a missing or malformed secret: fix the configuration
+			log.Print(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Printf("event %s %s\n", event.Type, event.ID) // store event.ID; skip one already seen
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, nil))
+}
+```
+<!-- docql:webhook:end -->
+
+The same code is `ExampleVerifyWebhook` on
+[pkg.go.dev](https://pkg.go.dev/github.com/finoniq/docql-go).
+
 ## Configuration
 
 | Option | Env variable | Default | Notes |

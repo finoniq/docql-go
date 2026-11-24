@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 
 	docql "github.com/finoniq/docql-go"
@@ -110,4 +112,50 @@ func ExampleClient_QueryDocument_spreadsheet() {
 	if res.PageCount != nil {
 		fmt.Println("pages:", *res.PageCount)
 	}
+}
+
+// ExampleVerifyWebhook is the README webhook receiver: it reads the raw body
+// of each POST (at most 1 MiB), verifies it with DOCQL_WEBHOOK_SECRET,
+// answers 400 for a refused delivery and 204 after printing the event type
+// and id. scripts/check-example.sh fails when this body and the README's
+// main() drift apart. It has no Output comment, so `go test` compiles it
+// without running it.
+func ExampleVerifyWebhook() {
+	secret := os.Getenv("DOCQL_WEBHOOK_SECRET") // whsec_..., from the console
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+
+	http.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+		// The raw bytes, before any JSON decoding; at most 1 MiB.
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+			} else {
+				w.WriteHeader(http.StatusBadRequest)
+			}
+			return
+		}
+
+		event, err := docql.VerifyWebhook(body, r.Header, []string{secret})
+		var whErr *docql.WebhookError
+		if errors.As(err, &whErr) {
+			log.Printf("webhook refused: %s", whErr.Reason)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if err != nil { // a missing or malformed secret: fix the configuration
+			log.Print(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Printf("event %s %s\n", event.Type, event.ID) // store event.ID; skip one already seen
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, nil))
 }
