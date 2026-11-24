@@ -425,13 +425,14 @@ func jsonString(raw json.RawMessage) (string, bool) {
 // ASCII and returns it in UTC. time.Parse alone would also take offsets and
 // other forms the console never sends; after the shape check it range-checks
 // the month, the day (February 30), hour 0-23, minute 0-59 and second 0-59
-// (no leap second).
+// (no leap second). Year 0000 is refused too: time.Parse accepts it, but the
+// other SDKs cannot represent it, so all three treat it as invalid_payload.
 func parseWebhookTimestamp(s string) (time.Time, bool) {
 	if !webhookTimestampShape(s) {
 		return time.Time{}, false
 	}
 	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
+	if err != nil || t.Year() == 0 {
 		return time.Time{}, false
 	}
 	return t.UTC(), true

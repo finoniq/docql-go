@@ -294,6 +294,23 @@ func TestVerifyWebhookPayload(t *testing.T) {
 			t.Fatalf("Timestamp = %v", event.Timestamp)
 		}
 	})
+	t.Run("a year-0000 timestamp is invalid_payload", func(t *testing.T) {
+		for _, stamp := range []string{"0000-01-01T00:00:00Z", "0000-12-31T23:59:59.999Z"} {
+			body := strings.Replace(testWebhookBody, "2026-11-17T03:04:05.678Z", stamp, 1)
+			_, err := newTestDelivery(body).verify()
+			wantWebhookReason(t, err, "invalid_payload")
+		}
+	})
+	t.Run("a year-0001 timestamp is fine", func(t *testing.T) {
+		body := strings.Replace(testWebhookBody, "2026-11-17T03:04:05.678Z", "0001-01-01T00:00:00Z", 1)
+		event, err := newTestDelivery(body).verify()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Timestamp.Year() != 1 {
+			t.Fatalf("Timestamp = %v", event.Timestamp)
+		}
+	})
 	t.Run("webhook.test has an empty non-nil Data", func(t *testing.T) {
 		body := `{"id":"evt_t","type":"webhook.test","timestamp":"2026-11-19T00:00:00.000Z","data":{}}`
 		event, err := newTestDelivery(body).verify()
