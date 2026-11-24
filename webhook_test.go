@@ -47,6 +47,7 @@ const (
 type testDelivery struct {
 	key    []byte
 	secret string
+	sig    string
 	body   []byte
 	header http.Header
 }
@@ -54,15 +55,13 @@ type testDelivery struct {
 func newTestDelivery(body string) testDelivery {
 	key, secret := testWebhookKey(3, 32)
 	ts := strconv.FormatInt(testWebhookNow, 10)
+	sig := testWebhookSign(key, testWebhookID, ts, []byte(body))
 	return testDelivery{
 		key:    key,
 		secret: secret,
+		sig:    sig,
 		body:   []byte(body),
-		header: http.Header{
-			"webhook-id":        {testWebhookID},
-			"webhook-timestamp": {ts},
-			"webhook-signature": {testWebhookSign(key, testWebhookID, ts, []byte(body))},
-		},
+		header: http.Header{"webhook-id": {testWebhookID}, "webhook-timestamp": {ts}, "webhook-signature": {sig}},
 	}
 }
 
@@ -358,7 +357,7 @@ func TestVerifyWebhookSecretValidation(t *testing.T) {
 // failure, contains the secret text or the delivery's signature text.
 func TestVerifyWebhookNoEcho(t *testing.T) {
 	d := newTestDelivery(testWebhookBody)
-	sig := d.header["webhook-signature"][0]
+	sig := d.sig
 	at := time.Unix(testWebhookNow, 0)
 	type attempt struct {
 		name    string
@@ -437,7 +436,10 @@ func TestWebhookErrorText(t *testing.T) {
 func TestVerifyWebhookMutationsOnlyGiveEventOrWebhookError(t *testing.T) {
 	rng := rand.New(rand.NewPCG(451, 7))
 	base := newTestDelivery(testWebhookBody)
+	// Raw lower-case keys, held in variables: the canonicalizing Header
+	// methods would hide exactly the spellings this run is about.
 	names := []string{"webhook-id", "webhook-timestamp", "webhook-signature"}
+	idName, tsName, sigName := names[0], names[1], names[2]
 	lookalikes := []string{"webhoo\u212a-id", "webhook-\u017fignature", "webhook-t\u0130mestamp", "\uff57ebhook-id", "webhook_id", "webhook-id ", "WEBHOOK-ID"}
 	junk := []string{"", " ", "\x00", "\xff\xfe", "\u00e9", "v1,", "v1, ", "v2,abc", "1795000000", "+1795000000",
 		"\u0661\u0662\u0663", "\r\n", "v1,====", "\t", "999999999999", "9999999999999", "-1", "0"}
@@ -516,10 +518,10 @@ func TestVerifyWebhookMutationsOnlyGiveEventOrWebhookError(t *testing.T) {
 				}
 			case 10: // signature entry games
 				{
-					sig := base.header["webhook-signature"][0]
+					sig := base.sig
 					forms := []string{sig + " " + sig, "v1," + sig, strings.ToUpper(sig), sig[:len(sig)-1], sig + "=",
 						strings.ReplaceAll(sig, "+", "-"), sig + "\t" + sig, " " + sig + " ", "v1," + strings.Repeat("A", rng.IntN(90))}
-					header["webhook-signature"] = []string{forms[rng.IntN(len(forms))]}
+					header[sigName] = []string{forms[rng.IntN(len(forms))]}
 				}
 			case 11: // a timestamp of random digits
 				{
@@ -527,13 +529,13 @@ func TestVerifyWebhookMutationsOnlyGiveEventOrWebhookError(t *testing.T) {
 					for j := range b {
 						b[j] = byte('0' + rng.IntN(10))
 					}
-					header["webhook-timestamp"] = []string{string(b)}
+					header[tsName] = []string{string(b)}
 					resign = true
 				}
 			}
 		}
-		if resign && len(header["webhook-id"]) == 1 && len(header["webhook-timestamp"]) == 1 {
-			header["webhook-signature"] = []string{testWebhookSign(base.key, header["webhook-id"][0], header["webhook-timestamp"][0], body)}
+		if resign && len(header[idName]) == 1 && len(header[tsName]) == 1 {
+			header[sigName] = []string{testWebhookSign(base.key, header[idName][0], header[tsName][0], body)}
 		}
 
 		if nilHeader {
