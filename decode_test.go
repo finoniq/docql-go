@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -610,5 +611,66 @@ func TestDecodeJobSuccessCases(t *testing.T) {
 	}
 	if ran < 11 {
 		t.Fatalf("ran %d 2xx job decode cases, want at least 11", ran)
+	}
+}
+
+// TestDecodeSuccessWithAndWithoutScreenshot (45.1 D-33): during the
+// screenshot-removal rollout a success envelope may still carry the legacy
+// "screenshot": null metadata key, or may not. A sync answer and a succeeded
+// job's result decode to the same typed fields either way, with no error;
+// only Metadata keeps the extra key.
+func TestDecodeSuccessWithAndWithoutScreenshot(t *testing.T) {
+	envelope := func(withScreenshot bool) string {
+		shot := ""
+		if withScreenshot {
+			shot = `"screenshot":null,`
+		}
+		return `{"data":{"total":42,"rows":[{"a":1}]},"metadata":{` + shot +
+			`"extraction_status":"completed","page_count":3,"pages_ocr":0,"request_id":"req-shot"}}`
+	}
+	type typed struct {
+		data, requestID     string
+		pageCount, pagesOCR int
+	}
+	fields := func(t *testing.T, res *QueryResult) typed {
+		t.Helper()
+		if res == nil || res.PageCount == nil || res.PagesOCR == nil {
+			t.Fatalf("result %+v lacks a typed field", res)
+		}
+		return typed{string(res.Data), res.RequestID, *res.PageCount, *res.PagesOCR}
+	}
+	want := typed{`{"total":42,"rows":[{"a":1}]}`, "req-shot", 3, 0}
+	wantMetadata := map[string]any{
+		"extraction_status": "completed", "page_count": json.Number("3"), "pages_ocr": json.Number("0"),
+		"request_id": "req-shot",
+	}
+	for _, withScreenshot := range []bool{true, false} {
+		body := envelope(withScreenshot)
+		sync, err := parseResult(200, nil, []byte(body), "k")
+		if err != nil {
+			t.Fatalf("screenshot %v: parseResult: %v", withScreenshot, err)
+		}
+		job, err := parseJob(200, http.Header{}, []byte(`{"job_id":"job_shot","status":"succeeded",`+
+			`"metadata":{"page_count":3,"pages_done":3},"result":`+body+`}`), "k", "")
+		if err != nil || job.Error != nil || job.Result == nil {
+			t.Fatalf("screenshot %v: parseJob: job %+v, err %v", withScreenshot, job, err)
+		}
+		for name, res := range map[string]*QueryResult{"sync": sync, "job": job.Result} {
+			if got := fields(t, res); got != want {
+				t.Errorf("screenshot %v, %s: typed fields %+v, want %+v", withScreenshot, name, got, want)
+			}
+			rest := map[string]any{}
+			for k, v := range res.Metadata {
+				if k != "screenshot" {
+					rest[k] = v
+				}
+			}
+			if v, ok := res.Metadata["screenshot"]; ok != withScreenshot || v != nil {
+				t.Errorf("screenshot %v, %s: Metadata[screenshot] = %v, present %v", withScreenshot, name, v, ok)
+			}
+			if !reflect.DeepEqual(rest, wantMetadata) {
+				t.Errorf("screenshot %v, %s: Metadata = %v, want %v", withScreenshot, name, res.Metadata, wantMetadata)
+			}
+		}
 	}
 }

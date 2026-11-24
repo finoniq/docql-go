@@ -302,3 +302,61 @@ func TestErrorMetadataRoutes(t *testing.T) {
 		t.Fatalf("failed job error: Reason %q, Metadata %v", job.Error.Reason, job.Error.Metadata)
 	}
 }
+
+// TestErrorMetadataEmbeddedJobScrub (45.1 IN-04): a failed job's embedded
+// error goes through parseJob and decodeError, and an API key the server
+// echoes in a metadata key and inside a metadata value comes back as ***,
+// with the key nowhere in the job's error.
+func TestErrorMetadataEmbeddedJobScrub(t *testing.T) {
+	const key = "dql_InEmbeddedJobScrubKey7Qz4Wv9Xc2Lp_Ab12Cd"
+	failed := `{"job_id":"job-scrub","status":"failed","error":{"status_code":422,` +
+		`"error_info":"refused for ` + key + `","metadata":{"reason":"invalid_params","request_id":"r-scrub",` +
+		`"` + key + `":"as a key","echo":"sent ` + key + ` back","nested":{"list":["` + key + `",1]}}}}`
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, failed)
+	}))
+	defer srv.Close()
+	client, err := NewClient(WithAPIKey(key), WithAPIURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	job, err := client.GetJob(context.Background(), "job-scrub")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if gotPath != "/v1/jobs/job-scrub" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	var de *Error
+	if job.Status != JobStatusFailed || !errors.As(job.Error, &de) {
+		t.Fatalf("job = %+v, want a failed job with an *Error", job)
+	}
+	if de.JobID != "job-scrub" || de.Reason != "invalid_params" || de.Retryable {
+		t.Errorf("Error = %+v", de)
+	}
+	if de.Metadata["***"] != "as a key" {
+		t.Errorf("Metadata[***] = %v, want the echoed key replaced by ***", de.Metadata["***"])
+	}
+	if de.Metadata["echo"] != "sent *** back" {
+		t.Errorf("Metadata[echo] = %v, want sent *** back", de.Metadata["echo"])
+	}
+	nested, _ := de.Metadata["nested"].(map[string]any)
+	if list, _ := nested["list"].([]any); len(list) != 2 || list[0] != "***" || list[1] != json.Number("1") {
+		t.Errorf("Metadata[nested] = %v", de.Metadata["nested"])
+	}
+	encoded, err := json.Marshal(de.Metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	for name, text := range map[string]string{
+		"metadata": string(encoded), "Message": de.Message, "Body": de.Body, "Error()": de.Error(),
+		"RequestID": de.RequestID, "job": fmt.Sprintf("%+v", *job),
+	} {
+		if strings.Contains(text, key) {
+			t.Errorf("%s carries the API key: %s", name, text)
+		}
+	}
+}
