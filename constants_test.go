@@ -158,28 +158,33 @@ func TestSurfaceExported(t *testing.T) {
 		"ReasonIdempotencyKeyConflict", "ReasonIdempotencyInProgress", "ReasonJobInterrupted",
 		"ReasonDocumentTooComplex", "ReasonSpreadsheetTooLarge", "ReasonTooManyPages",
 		"JobStatusQueued", "JobStatusRunning", "JobStatusSucceeded", "JobStatusFailed", "JobStatusCancelled",
+		"EventJobSucceeded", "EventJobFailed", "EventJobCancelled", "EventWebhookTest",
 	}
 	wantVariables := []string{
 		"ErrMissingAPIKey", "ErrInvalidAPIURL", "ErrInvalidTimeout", "ErrNilContext",
 		"ErrNoInstruction", "ErrNoFile", "ErrMissingFilename",
 		"ErrInvalidAPIKey", "ErrNilClient",
 		"ErrInvalidIdempotencyKey", "ErrNoJobID", "ErrIdempotencyKeyOnQuery",
+		"ErrInvalidWebhookSecret", "ErrInvalidWebhookTolerance",
 	}
 	wantTypes := []string{
 		"Client", "Option", "QueryOption", "Mode", "Instruction", "File",
 		"QueryResult", "Error", "ConnectionError",
 		"Job", "JobStatus", "WaitError", "WaitOption",
+		"WebhookOption", "WebhookEvent", "WebhookError",
 	}
 	wantFunctions := []string{
 		"NewClient", "WithAPIKey", "WithAPIURL", "WithTimeout", "WithHTTPClient",
 		"WithMode", "WithFilename", "Query", "Prompt", "FilePath", "FileBytes", "FileReader",
 		"WithIdempotencyKey", "WithPollInterval",
+		"VerifyWebhook", "WithWebhookTolerance",
 	}
 	wantMethods := []string{
 		"Client.QueryDocument", "Client.String", "Client.GoString",
 		"Error.Error", "ConnectionError.Error", "ConnectionError.Unwrap", "ConnectionError.Timeout",
 		"Client.SubmitDocument", "Client.GetJob", "Client.Wait", "Client.CancelJob",
 		"WaitError.Error", "WaitError.Unwrap", "WaitError.Timeout",
+		"WebhookError.Error",
 	}
 	wantFields := map[string][]string{
 		"QueryResult": {"Data", "RequestID", "PageCount", "PagesOCR", "Metadata"},
@@ -193,6 +198,8 @@ func TestSurfaceExported(t *testing.T) {
 		"Job": {"JobID", "Status", "PageCount", "PagesDone", "RequestID",
 			"CreatedAt", "StartedAt", "FinishedAt", "ExpiresAt",
 			"Result", "Error", "RetryAfter", "IdempotencyKey"},
+		"WebhookEvent": {"ID", "Type", "Timestamp", "JobID", "Status", "Data"},
+		"WebhookError": {"Reason"},
 	}
 	// Every exported struct type has its field list frozen here.
 	for typ := range got.fields {
