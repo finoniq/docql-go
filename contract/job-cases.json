@@ -1922,7 +1922,7 @@
             "content-type": "application/json",
             "x-request-id": "00000000-0000-4000-8000-000000002413"
           },
-          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n"
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n"
         }
       ],
       "expect": {
@@ -2112,7 +2112,7 @@
             "content-type": "application/json",
             "x-request-id": "00000000-0000-4000-8000-000000002463"
           },
-          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n"
+          "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n"
         }
       ],
       "expect": {
@@ -2232,7 +2232,7 @@
         "content-type": "application/json",
         "x-request-id": "00000000-0000-4000-8000-000000002305"
       },
-      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n",
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n",
       "expect": {
         "status": 200,
         "reason": null,
@@ -2334,7 +2334,7 @@
         "content-type": "application/json",
         "x-request-id": "00000000-0000-4000-8000-000000002311"
       },
-      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\",\"screenshot\":null}}}\n",
+      "bodyUtf8": "{\"job_id\":\"job_0123456789ABCDEFGHIJKL\",\"status\":\"succeeded\",\"metadata\":{\"page_count\":3,\"pages_done\":3,\"request_id\":\"00000000-0000-4000-8000-000000002301\"},\"created_at\":\"2026-10-17T05:00:00Z\",\"started_at\":\"2026-10-17T05:00:02Z\",\"finished_at\":\"2026-10-17T05:00:09Z\",\"expires_at\":\"2026-10-17T06:00:09Z\",\"result\":{\"data\":{},\"metadata\":{\"extraction_status\":\"completed\",\"file_hash\":\"4846bcbd5db49a9ae0dec5536b934ca457f25639c20968aa7b0b923f55b027f6\",\"file_mimetype\":\"application/pdf\",\"file_size\":268,\"generated_query\":null,\"page_count\":3,\"pages_ocr\":0,\"request_id\":\"00000000-0000-4000-8000-000000002301\"}}}\n",
       "expect": {
         "status": 200,
         "reason": null,
