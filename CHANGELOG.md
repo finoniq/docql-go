@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-24
+
+### Added
+
+- `VerifyWebhook(body, header, secrets, opts...)` verifies a webhook
+  delivery signed under the open Standard Webhooks spec and returns a
+  `WebhookEvent` with `ID`, `Type`, `Timestamp` (UTC), `JobID`, `Status` and
+  `Data` (numbers as `json.Number`, never nil). It needs no client and no API
+  key. Pass several secrets during a rotation: a delivery signed with any of
+  them verifies.
+- `WithWebhookTolerance(d)`, the clock difference allowed either way
+  (default 5 minutes).
+- `ErrInvalidWebhookSecret` and `ErrInvalidWebhookTolerance` (match with
+  `errors.Is`) for a missing or malformed secret and for a tolerance of zero
+  or less.
+- `*WebhookError` (match with `errors.As`) for a refused delivery. Its
+  `Reason` is one of `missing_header`, `invalid_timestamp`,
+  `invalid_signature_header`, `signature_mismatch`, `timestamp_too_old`,
+  `timestamp_too_new` or `invalid_payload`.
+- `EventJobSucceeded`, `EventJobFailed`, `EventJobCancelled` and
+  `EventWebhookTest`.
+- README § Webhooks and the pkg.go.dev example `ExampleVerifyWebhook`: a
+  standard-library receiver, run against a delivery signed at run time.
+
+### Changed
+
+- Contract kit v6 is vendored. Its success bodies no longer carry
+  `metadata.screenshot`, and the SDK decodes a success with or without it.
+- The install line and § Versioning name v0.4.
+
+### Correction to 0.3.0
+
+The 0.3.0 entry said there were no breaking changes. In 0.3.0 `Error` gained
+the `Metadata map[string]any` field, so `docql.Error` is no longer comparable
+with `==` and cannot be a map key. Code that compares `*Error` pointers or
+fields, or uses `errors.As`, is unaffected. The 0.3.0 entry below now says
+so. 0.4.0 does not change `Error`.
+
+No breaking changes: code written against v0.3.0 builds and runs unchanged.
+
 ## [0.3.0] - 2026-11-23
 
 ### Added
@@ -31,8 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and § Versioning name v0.3.
 
 The module path stays `github.com/finoniq/docql-go` and `go.mod` still says
-`go 1.26` with no dependency. No breaking changes: code written against
-v0.2.1 builds and runs unchanged.
+`go 1.26` with no dependency.
+
+Corrected 2026-11-24: this entry first said there were no breaking changes.
+That was wrong. `Error` gained the `Metadata map[string]any` field, so
+`docql.Error` is no longer comparable with `==` and cannot be a map key.
+Code that compares `*Error` pointers or fields, or uses `errors.As`, is
+unaffected.
 
 ## [0.2.1] - 2026-10-26
 
