@@ -200,6 +200,24 @@ jobs:
         run: |
           set -euo pipefail
           scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG" --block jobs
+      - name: README spreadsheet example from the module
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG" --block spreadsheet
+      - name: README spreadsheet refusal from the module
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG" --block spreadsheet --sheet-name toolarge-cells-558-557.csv --expect-line "too large: cells=558 limit=557"
+      - name: README webhook receiver from the module
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          scripts/stub-up.sh --run scripts/run-readme.sh --module-version "$TAG" --block webhook
       - name: pkg.go.dev shows the version with the licence
         run: |
           set -euo pipefail

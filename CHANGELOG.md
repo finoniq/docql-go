@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - 2026-11-25
 
+### Fixed
+
+- The release workflow's verify job now also runs the README spreadsheet
+  example, its refusal branch and the webhook receiver against the published
+  module; it ran only the jobs example.
+
 ### Changed
 
 - The README rotation guidance now says to remove the old secret from the
