@@ -7,7 +7,7 @@ standard library only, so adding it cannot add a single dependency to yours.
 ## Install
 
 ```sh
-go get github.com/finoniq/docql-go@v0.4.0
+go get github.com/finoniq/docql-go@v0.4.1
 ```
 
 ```go
@@ -158,6 +158,9 @@ before you trust it:
   it is. A body that was decoded and encoded again never verifies.
 - Pass the endpoint secret (`whsec_…`). During the 24 h rotation overlap, pass
   both secrets in the slice: a delivery signed with either one verifies.
+  Remove the old secret from the slice when the overlap ends, and at once if
+  you rolled the secret because it leaked: a secret you still pass still
+  verifies.
 - The helper does no replay detection. Store each `event.ID` and skip one you
   have already seen: the id is the same across retries and resends.
 - `event.Type` is an open string. Compare it with `docql.EventJobSucceeded`,

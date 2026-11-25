@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-25
+
+### Changed
+
+- The README rotation guidance now says to remove the old secret from the
+  slice when the overlap ends, and at once after a roll caused by a leak,
+  because a secret you still pass still verifies.
+- The install line names v0.4.1.
+
+No API change: code written against 0.4.0 runs unchanged.
+
 ## [0.4.0] - 2026-11-24
 
 ### Added
@@ -194,6 +205,8 @@ No breaking changes: code written against v0.1.0 builds and runs unchanged.
 - `Mode` with `ModeFast` / `ModeStandard`, the fourteen `Reason…` constants,
   and the exported `Version`.
 
+[0.4.1]: https://github.com/finoniq/docql-go/tree/v0.4.1
+[0.4.0]: https://github.com/finoniq/docql-go/tree/v0.4.0
 [0.3.0]: https://github.com/finoniq/docql-go/tree/v0.3.0
 [0.2.1]: https://github.com/finoniq/docql-go/tree/v0.2.1
 [0.2.0]: https://github.com/finoniq/docql-go/tree/v0.2.0
