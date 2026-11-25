@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slice when the overlap ends, and at once after a roll caused by a leak,
   because a secret you still pass still verifies.
 - The install line names v0.4.1.
+- Contract kit v7 is vendored (stub pin `sha-980220e`). Its two paid
+  workbook cases (`sheet-xlsx`, `sheet-ods`) now send the query
+  `{ items[] { item } }`; no served answer or SDK behavior changes.
 
 No API change: code written against 0.4.0 runs unchanged.
 

@@ -117,7 +117,7 @@
           "name": "base-3sheets.xlsx",
           "fixture": "sheets/base-3sheets.xlsx"
         },
-        "query": "{ title }"
+        "query": "{ items[] { item } }"
       },
       "expect": {
         "status": 200,
@@ -140,7 +140,7 @@
           "name": "base-multi.ods",
           "fixture": "sheets/base-multi.ods"
         },
-        "query": "{ title }"
+        "query": "{ items[] { item } }"
       },
       "expect": {
         "status": 200,
